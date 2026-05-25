@@ -70,3 +70,8 @@ htmlcov/
 
 # Documentation builds
 docs/_build/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/screenshot*.png
