@@ -9,6 +9,7 @@ from astock_agents.agents.bull_researcher import BullResearcher
 from astock_agents.agents.bear_researcher import BearResearcher
 from astock_agents.agents.trader import Trader
 from astock_agents.agents.risk_manager import RiskManager
+from astock_agents.agents.macro_analyst import MacroAnalyst
 
 __all__ = [
     "BaseAgent",
@@ -20,4 +21,5 @@ __all__ = [
     "BearResearcher",
     "Trader",
     "RiskManager",
+    "MacroAnalyst",
 ]

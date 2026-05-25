@@ -382,6 +382,30 @@ def _get_data_manager():
     return _data_manager
 
 
+_macro_analyst = None
+
+
+def _get_macro_analyst():
+    """懒加载宏观分析师"""
+    global _macro_analyst
+    if _macro_analyst is None:
+        from astock_agents.agents.macro_analyst import MacroAnalyst
+        _macro_analyst = MacroAnalyst()
+    return _macro_analyst
+
+
+_portfolio_risk_analyzer = None
+
+
+def _get_portfolio_risk_analyzer():
+    """懒加载投资组合风险分析器"""
+    global _portfolio_risk_analyzer
+    if _portfolio_risk_analyzer is None:
+        from astock_agents.services.portfolio_risk import PortfolioRiskAnalyzer
+        _portfolio_risk_analyzer = PortfolioRiskAnalyzer()
+    return _portfolio_risk_analyzer
+
+
 # ---------- 选股器 ----------
 
 @app.get("/api/screener/presets")
@@ -633,6 +657,78 @@ async def run_backtest(request: Request, body: BacktestRequest):
     except Exception as e:
         logger.error(f"[Web] 回测执行失败: {validated_code}, {e}")
         raise HTTPException(status_code=500, detail=f"回测执行失败: {str(e)}")
+
+
+# ---------- 宏观分析 ----------
+
+class MacroAnalysisRequest(BaseModel):
+    """宏观分析请求"""
+    stock_code: str = Field(..., description="股票代码，如 600519.SH")
+    stock_name: Optional[str] = Field(None, description="股票名称")
+    industry: Optional[str] = Field(None, description="所属行业")
+    pe_ttm: Optional[float] = Field(None, description="市盈率TTM")
+
+
+@app.post("/api/macro/analyze")
+@limiter.limit("10/minute")
+async def macro_analyze(request: Request, body: MacroAnalysisRequest):
+    """
+    宏观分析 - 经济周期定位、政策解读、宏观风险评估
+
+    限流: 每分钟10次请求
+    """
+    try:
+        validated_code = validate_stock_code(body.stock_code)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        from astock_agents.models import StockData
+        stock_data = StockData(
+            stock_code=validated_code,
+            stock_name=body.stock_name or validated_code,
+            industry=body.industry,
+            pe_ttm=body.pe_ttm,
+        )
+
+        analyst = _get_macro_analyst()
+        result = analyst.analyze(stock_data)
+
+        # 将Signal枚举转为字符串以便JSON序列化
+        if "signal" in result and hasattr(result["signal"], "value"):
+            result["signal"] = result["signal"].value
+
+        return {"success": True, "data": result}
+
+    except Exception as e:
+        logger.error(f"[Web] 宏观分析失败: {body.stock_code}, {e}")
+        raise HTTPException(status_code=500, detail=f"宏观分析失败: {str(e)}")
+
+
+# ---------- 投资组合风险分析 ----------
+
+@app.get("/api/portfolio/risk")
+@limiter.limit("10/minute")
+async def portfolio_risk_analysis(request: Request):
+    """
+    投资组合风险分析 - 集中度风险、行业集中度、再平衡建议
+
+    基于当前模拟交易持仓进行风险分析。
+    限流: 每分钟10次请求
+    """
+    try:
+        pt = _get_paper_trading()
+        portfolio = pt.get_portfolio()
+        positions = portfolio.positions
+
+        analyzer = _get_portfolio_risk_analyzer()
+        result = analyzer.analyze(positions)
+
+        return {"success": True, "data": result}
+
+    except Exception as e:
+        logger.error(f"[Web] 组合风险分析失败: {e}")
+        raise HTTPException(status_code=500, detail=f"组合风险分析失败: {str(e)}")
 
 
 # ==================== 启动函数 ====================
