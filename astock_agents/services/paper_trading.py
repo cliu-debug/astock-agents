@@ -1,4 +1,4 @@
-"""模拟交易系统 - 下单、持仓、盈亏计算、交易日志"""
+"""模拟交易系统 - 下单、持仓、盈亏计算、SQLite持久化"""
 
 import uuid
 from typing import List, Optional, Dict, Any
@@ -9,6 +9,7 @@ from astock_agents.models.portfolio import (
     TradeOrder, TradeDirection, TradeStatus, OrderType,
     Position, Portfolio
 )
+from astock_agents.db.database import Database
 
 
 class PaperTradingService:
@@ -20,6 +21,7 @@ class PaperTradingService:
     2. 持仓管理
     3. 盈亏计算（含佣金和印花税）
     4. 交易日志
+    5. SQLite持久化
     """
 
     # 交易费率
@@ -28,19 +30,22 @@ class PaperTradingService:
     STAMP_TAX_RATE = 0.001        # 印花税千一（仅卖出）
     STAMP_TAX_MIN = 1.0           # 最低印花税1元
 
-    def __init__(self, initial_capital: float = 1000000.0):
+    def __init__(self, initial_capital: float = 1000000.0, db: Optional[Database] = None):
         """
         初始化模拟交易系统
 
         Args:
             initial_capital: 初始资金
+            db: 数据库实例，为空时自动创建默认实例
         """
+        self._db = db or Database()
         self.portfolio = Portfolio(
             initial_capital=initial_capital,
             available_cash=initial_capital,
         )
         self.orders: List[TradeOrder] = []
         self.trade_history: List[Dict[str, Any]] = []
+        self._load_from_db()
         logger.info(f"[模拟交易] 初始化完成, 资金{initial_capital:,.0f}")
 
     def place_order(
@@ -89,6 +94,7 @@ class PaperTradingService:
             self._fill_order(order, price or self._get_market_price(stock_code))
 
         self.orders.append(order)
+        self._save_order_to_db(order)
         self._update_portfolio_stats()
 
         logger.info(
@@ -98,7 +104,12 @@ class PaperTradingService:
         return order
 
     def _fill_order(self, order: TradeOrder, fill_price: float):
-        """成交订单"""
+        """成交订单
+
+        Args:
+            order: 交易订单
+            fill_price: 成交价格
+        """
         order.filled_price = fill_price
         order.filled_quantity = order.quantity
         order.status = TradeStatus.FILLED
@@ -134,7 +145,13 @@ class PaperTradingService:
         })
 
     def _process_buy(self, order: TradeOrder, price: float, total_cost: float):
-        """处理买入"""
+        """处理买入
+
+        Args:
+            order: 交易订单
+            price: 成交价格
+            total_cost: 总成本（含费用）
+        """
         if total_cost > self.portfolio.available_cash:
             order.status = TradeStatus.CANCELLED
             logger.warning(f"[模拟交易] 资金不足: 需要{total_cost:,.0f}, 可用{self.portfolio.available_cash:,.0f}")
@@ -151,8 +168,9 @@ class PaperTradingService:
             existing.available_quantity += order.quantity
             existing.avg_cost = round(new_cost, 3)
             existing.last_trade_at = datetime.now()
+            self._save_position_to_db(existing)
         else:
-            self.portfolio.positions.append(Position(
+            position = Position(
                 stock_code=order.stock_code,
                 stock_name=order.stock_name,
                 quantity=order.quantity,
@@ -160,10 +178,19 @@ class PaperTradingService:
                 avg_cost=price,
                 first_buy_at=datetime.now(),
                 last_trade_at=datetime.now(),
-            ))
+            )
+            self.portfolio.positions.append(position)
+            self._save_position_to_db(position)
 
     def _process_sell(self, order: TradeOrder, price: float, trade_amount: float, total_cost: float):
-        """处理卖出"""
+        """处理卖出
+
+        Args:
+            order: 交易订单
+            price: 成交价格
+            trade_amount: 成交金额
+            total_cost: 总成本（含费用）
+        """
         position = self._find_position(order.stock_code)
         if not position or position.available_quantity < order.quantity:
             order.status = TradeStatus.CANCELLED
@@ -186,23 +213,44 @@ class PaperTradingService:
         # 清空持仓
         if position.quantity <= 0:
             self.portfolio.positions = [p for p in self.portfolio.positions if p.stock_code != order.stock_code]
+            self._db.delete_position(order.stock_code)
+        else:
+            self._save_position_to_db(position)
 
     def _find_position(self, stock_code: str) -> Optional[Position]:
-        """查找持仓"""
+        """查找持仓
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            持仓对象，不存在时返回None
+        """
         for pos in self.portfolio.positions:
             if pos.stock_code == stock_code:
                 return pos
         return None
 
     def _get_market_price(self, stock_code: str) -> float:
-        """获取市价（简化版，从持仓或默认值获取）"""
+        """获取市价（简化版，从持仓或默认值获取）
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            当前市场价格
+        """
         position = self._find_position(stock_code)
         if position and position.current_price:
             return position.current_price
         return 50.0  # 默认价格
 
     def update_prices(self, price_map: Dict[str, float]):
-        """更新持仓股票的当前价格"""
+        """更新持仓股票的当前价格
+
+        Args:
+            price_map: 股票代码到价格的映射
+        """
         for pos in self.portfolio.positions:
             if pos.stock_code in price_map:
                 pos.current_price = price_map[pos.stock_code]
@@ -211,6 +259,7 @@ class PaperTradingService:
                 pos.unrealized_pnl_pct = round(
                     (pos.current_price - pos.avg_cost) / pos.avg_cost * 100, 2
                 ) if pos.avg_cost > 0 else 0
+                self._save_position_to_db(pos)
 
         self._update_portfolio_stats()
 
@@ -228,14 +277,137 @@ class PaperTradingService:
         self.portfolio.updated_at = datetime.now()
 
     def get_portfolio(self) -> Portfolio:
-        """获取投资组合"""
+        """获取投资组合
+
+        Returns:
+            投资组合对象
+        """
         self._update_portfolio_stats()
         return self.portfolio
 
     def get_orders(self, limit: int = 50) -> List[TradeOrder]:
-        """获取交易订单列表"""
+        """获取交易订单列表
+
+        Args:
+            limit: 返回条数上限
+
+        Returns:
+            交易订单列表，按创建时间倒序
+        """
         return sorted(self.orders, key=lambda o: o.created_at, reverse=True)[:limit]
 
     def get_trade_history(self) -> List[Dict[str, Any]]:
-        """获取交易历史"""
+        """获取交易历史
+
+        Returns:
+            交易历史列表，按时间倒序
+        """
         return list(reversed(self.trade_history))
+
+    # ---- 数据库持久化方法 ----
+
+    def _save_order_to_db(self, order: TradeOrder) -> None:
+        """保存订单到数据库
+
+        Args:
+            order: 交易订单
+        """
+        self._db.save_order({
+            "order_id": order.order_id,
+            "stock_code": order.stock_code,
+            "stock_name": order.stock_name,
+            "direction": order.direction.value,
+            "order_type": order.order_type.value,
+            "quantity": order.quantity,
+            "price": order.price,
+            "filled_price": order.filled_price,
+            "filled_quantity": order.filled_quantity,
+            "status": order.status.value,
+            "commission": order.commission,
+            "stamp_tax": order.stamp_tax,
+            "reason": order.reason,
+            "signal_source": order.signal_source,
+            "filled_at": order.filled_at.isoformat() if order.filled_at else None,
+        })
+
+    def _save_position_to_db(self, position: Position) -> None:
+        """保存持仓到数据库
+
+        Args:
+            position: 持仓对象
+        """
+        self._db.upsert_position({
+            "stock_code": position.stock_code,
+            "stock_name": position.stock_name,
+            "quantity": position.quantity,
+            "available_quantity": position.available_quantity,
+            "avg_cost": position.avg_cost,
+            "current_price": position.current_price,
+            "realized_pnl": position.realized_pnl,
+            "first_buy_at": position.first_buy_at.isoformat() if position.first_buy_at else None,
+            "last_trade_at": position.last_trade_at.isoformat() if position.last_trade_at else None,
+        })
+
+    def _load_from_db(self) -> None:
+        """从数据库加载订单和持仓"""
+        # 加载持仓
+        try:
+            position_rows = self._db.get_positions()
+            self.portfolio.positions = []
+            for row in position_rows:
+                self.portfolio.positions.append(Position(
+                    stock_code=row["stock_code"],
+                    stock_name=row["stock_name"],
+                    quantity=row["quantity"],
+                    available_quantity=row["available_quantity"],
+                    avg_cost=row["avg_cost"],
+                    current_price=row.get("current_price"),
+                    realized_pnl=row.get("realized_pnl", 0),
+                    first_buy_at=self._parse_datetime(row.get("first_buy_at")),
+                    last_trade_at=self._parse_datetime(row.get("last_trade_at")),
+                ))
+        except Exception as e:
+            logger.warning(f"[模拟交易] 加载持仓失败: {e}")
+
+        # 加载订单
+        try:
+            order_rows = self._db.get_orders(limit=500)
+            self.orders = []
+            for row in order_rows:
+                self.orders.append(TradeOrder(
+                    order_id=row["order_id"],
+                    stock_code=row["stock_code"],
+                    stock_name=row.get("stock_name"),
+                    direction=TradeDirection(row["direction"]),
+                    order_type=OrderType(row.get("order_type", "市价单")),
+                    quantity=row["quantity"],
+                    price=row.get("price"),
+                    filled_price=row.get("filled_price"),
+                    filled_quantity=row.get("filled_quantity", 0),
+                    status=TradeStatus(row.get("status", "待成交")),
+                    commission=row.get("commission", 0),
+                    stamp_tax=row.get("stamp_tax", 0),
+                    reason=row.get("reason"),
+                    signal_source=row.get("signal_source"),
+                    created_at=self._parse_datetime(row.get("created_at")) or datetime.now(),
+                    filled_at=self._parse_datetime(row.get("filled_at")),
+                ))
+        except Exception as e:
+            logger.warning(f"[模拟交易] 加载订单失败: {e}")
+
+    @staticmethod
+    def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
+        """解析数据库中的时间字符串
+
+        Args:
+            value: 时间字符串
+
+        Returns:
+            datetime对象，输入为空时返回None
+        """
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value))
+        except (ValueError, TypeError):
+            return None
