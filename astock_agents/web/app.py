@@ -862,6 +862,215 @@ async def notification_test(request: Request):
     return {"success": success, "message": "测试通知已发送" if success else "测试通知发送失败"}
 
 
+# ==================== WebSocket实时推送 ====================
+
+from fastapi import WebSocket, WebSocketDisconnect
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket实时推送端点 - 分析进度、智能体状态、信号变化"""
+    from astock_agents.web.websocket import get_connection_manager
+    manager = get_connection_manager()
+    client_id = await manager.connect(websocket)
+    try:
+        while True:
+            # 保持连接，接收客户端消息（心跳等）
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        manager.disconnect(client_id)
+    except Exception as e:
+        logger.error(f"[WebSocket] 连接异常: {e}")
+        manager.disconnect(client_id)
+
+
+@app.get("/api/ws/status")
+async def websocket_status(request: Request):
+    """获取WebSocket连接状态"""
+    from astock_agents.web.websocket import get_connection_manager
+    manager = get_connection_manager()
+    return {"active_connections": manager.get_active_count()}
+
+
+# ==================== 追踪中心API ====================
+
+_tracker_service = None
+
+
+def _get_tracker_service():
+    """懒加载追踪服务"""
+    global _tracker_service
+    if _tracker_service is None:
+        from astock_agents.services.tracker import TrackerService
+        _tracker_service = TrackerService()
+    return _tracker_service
+
+
+@app.post("/api/trackers")
+@limiter.limit("10/minute")
+async def create_tracker(request: Request):
+    """创建股票追踪"""
+    body = await request.json()
+    stock_code = body.get("stock_code", "")
+    stock_name = body.get("stock_name", "")
+    thesis_data = body.get("thesis")
+
+    if not stock_code or not stock_name:
+        raise HTTPException(status_code=400, detail="股票代码和名称不能为空")
+
+    try:
+        service = _get_tracker_service()
+        thesis = None
+        if thesis_data:
+            from astock_agents.services.tracker import InvestmentThesis
+            thesis = InvestmentThesis(
+                reasons=thesis_data.get("reasons", []),
+                watch_indicators=thesis_data.get("watch_indicators", []),
+                exit_conditions=thesis_data.get("exit_conditions", []),
+                stop_loss_price=thesis_data.get("stop_loss_price"),
+                profit_target_price=thesis_data.get("profit_target_price"),
+            )
+        tracker = service.create_tracker(stock_code, stock_name, thesis)
+        return {"success": True, "data": tracker.__dict__ if hasattr(tracker, '__dict__') else str(tracker)}
+    except Exception as e:
+        logger.error(f"[Web] 创建追踪失败: {e}")
+        raise HTTPException(status_code=500, detail=f"创建追踪失败: {str(e)}")
+
+
+@app.get("/api/trackers")
+@limiter.limit("30/minute")
+async def list_trackers(request: Request, active_only: bool = True):
+    """获取追踪列表"""
+    service = _get_tracker_service()
+    trackers = service.list_trackers(active_only=active_only)
+    return {"success": True, "data": [t.__dict__ if hasattr(t, '__dict__') else str(t) for t in trackers]}
+
+
+@app.get("/api/trackers/{tracker_id}")
+@limiter.limit("30/minute")
+async def get_tracker(request: Request, tracker_id: str):
+    """获取追踪详情"""
+    service = _get_tracker_service()
+    tracker = service.get_tracker(tracker_id)
+    if not tracker:
+        raise HTTPException(status_code=404, detail="追踪不存在")
+    return {"success": True, "data": tracker.__dict__ if hasattr(tracker, '__dict__') else str(tracker)}
+
+
+@app.put("/api/trackers/{tracker_id}/thesis")
+@limiter.limit("10/minute")
+async def update_thesis(request: Request, tracker_id: str):
+    """更新投资逻辑"""
+    body = await request.json()
+    from astock_agents.services.tracker import InvestmentThesis
+    thesis = InvestmentThesis(
+        reasons=body.get("reasons", []),
+        watch_indicators=body.get("watch_indicators", []),
+        exit_conditions=body.get("exit_conditions", []),
+        stop_loss_price=body.get("stop_loss_price"),
+        profit_target_price=body.get("profit_target_price"),
+    )
+    service = _get_tracker_service()
+    success = service.update_thesis(tracker_id, thesis)
+    if not success:
+        raise HTTPException(status_code=404, detail="追踪不存在")
+    return {"success": True}
+
+
+@app.get("/api/trackers/{tracker_id}/timeline")
+@limiter.limit("30/minute")
+async def get_signal_timeline(request: Request, tracker_id: str, days: int = 30):
+    """获取信号变化时间线"""
+    service = _get_tracker_service()
+    timeline = service.get_signal_timeline(tracker_id, days=days)
+    return {"success": True, "data": [sc.__dict__ if hasattr(sc, '__dict__') else str(sc) for sc in timeline]}
+
+
+@app.post("/api/trackers/{tracker_id}/deactivate")
+@limiter.limit("10/minute")
+async def deactivate_tracker(request: Request, tracker_id: str):
+    """停止追踪"""
+    service = _get_tracker_service()
+    success = service.deactivate_tracker(tracker_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="追踪不存在")
+    return {"success": True}
+
+
+@app.delete("/api/trackers/{tracker_id}")
+@limiter.limit("10/minute")
+async def delete_tracker(request: Request, tracker_id: str):
+    """删除追踪"""
+    service = _get_tracker_service()
+    success = service.delete_tracker(tracker_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="追踪不存在")
+    return {"success": True}
+
+
+# ==================== 历史分析API ====================
+
+_history_service = None
+
+
+def _get_history_service():
+    """懒加载历史分析服务"""
+    global _history_service
+    if _history_service is None:
+        from astock_agents.services.analysis_history import AnalysisHistoryService
+        _history_service = AnalysisHistoryService()
+    return _history_service
+
+
+@app.get("/api/analysis/history/{stock_code}")
+@limiter.limit("30/minute")
+async def get_analysis_history(request: Request, stock_code: str, limit: int = 20):
+    """获取股票分析历史"""
+    service = _get_history_service()
+    history = service.get_analysis_history(stock_code, limit=limit)
+    return {"success": True, "data": history}
+
+
+@app.get("/api/analysis/compare")
+@limiter.limit("10/minute")
+async def compare_analyses(request: Request, id1: int, id2: int):
+    """对比两次分析结果"""
+    service = _get_history_service()
+    result = service.compare_analyses(id1, id2)
+    if not result:
+        raise HTTPException(status_code=404, detail="分析记录不存在")
+    return {"success": True, "data": result}
+
+
+@app.get("/api/analysis/statistics/{stock_code}")
+@limiter.limit("30/minute")
+async def get_signal_statistics(request: Request, stock_code: str, days: int = 30):
+    """获取信号统计"""
+    service = _get_history_service()
+    stats = service.get_signal_statistics(stock_code, days=days)
+    return {"success": True, "data": stats}
+
+
+@app.get("/api/analysis/trend/{stock_code}")
+@limiter.limit("30/minute")
+async def get_score_trend(request: Request, stock_code: str, days: int = 90):
+    """获取评分趋势"""
+    service = _get_history_service()
+    trend = service.get_score_trend(stock_code, days=days)
+    return {"success": True, "data": trend}
+
+
+@app.get("/api/analysis/search")
+@limiter.limit("30/minute")
+async def search_analyses(request: Request, q: str = "", limit: int = 50):
+    """搜索分析记录"""
+    service = _get_history_service()
+    results = service.search_analyses(q, limit=limit)
+    return {"success": True, "data": results}
+
+
 # ==================== 启动函数 ====================
 
 def run_server(host: str = "0.0.0.0", port: int = 8000):

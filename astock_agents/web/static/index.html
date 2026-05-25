@@ -1575,6 +1575,188 @@
             font-weight: 700;
             flex-shrink: 0;
         }
+
+        /* ===== 追踪中心样式 ===== */
+        .tracker-status-tag {
+            padding: 1px 8px;
+            border-radius: 2px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .status-active {
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--accent-green);
+        }
+
+        .status-inactive {
+            background: rgba(110, 118, 129, 0.15);
+            color: var(--text-muted);
+        }
+
+        .tracker-thesis {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 12px;
+        }
+
+        .thesis-section {
+            margin-bottom: 12px;
+        }
+
+        .thesis-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .thesis-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--accent-blue);
+            margin-bottom: 6px;
+        }
+
+        .thesis-item {
+            font-size: 12px;
+            color: var(--text-secondary);
+            padding: 2px 0 2px 12px;
+            position: relative;
+        }
+
+        .thesis-item::before {
+            content: '\2022';
+            position: absolute;
+            left: 0;
+            color: var(--text-muted);
+        }
+
+        .thesis-price-row {
+            display: flex;
+            gap: 24px;
+            font-size: 13px;
+        }
+
+        .signal-timeline-chart {
+            width: 100%;
+            height: 280px;
+        }
+
+        /* ===== 智能体状态面板样式 ===== */
+        .agent-status-panel {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 12px;
+            margin-bottom: 0;
+        }
+
+        .agent-status-title {
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .agent-status-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+        }
+
+        .agent-card {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 10px;
+            transition: border-color 0.3s;
+        }
+
+        .agent-card.agent-running {
+            border-color: var(--accent-orange);
+            animation: agent-pulse 1.5s ease-in-out infinite;
+        }
+
+        .agent-card.agent-done {
+            border-color: var(--accent-green);
+        }
+
+        @keyframes agent-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(240, 136, 62, 0); }
+            50% { box-shadow: 0 0 8px 2px rgba(240, 136, 62, 0.25); }
+        }
+
+        .agent-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .agent-card-name {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .agent-card-status {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 1px 6px;
+            border-radius: 2px;
+        }
+
+        .agent-card-status.status-idle {
+            background: rgba(110, 118, 129, 0.15);
+            color: var(--text-muted);
+        }
+
+        .agent-card-status.status-running {
+            background: rgba(240, 136, 62, 0.15);
+            color: var(--accent-orange);
+        }
+
+        .agent-card-status.status-completed {
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--accent-green);
+        }
+
+        .agent-card-progress {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .agent-progress-track {
+            flex: 1;
+            height: 4px;
+            background: var(--bg-primary);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .agent-progress-fill {
+            height: 100%;
+            border-radius: 2px;
+            background: var(--accent-blue);
+            transition: width 0.3s;
+        }
+
+        .agent-card.agent-running .agent-progress-fill {
+            background: var(--accent-orange);
+        }
+
+        .agent-card.agent-done .agent-progress-fill {
+            background: var(--accent-green);
+        }
+
+        .agent-progress-num {
+            font-size: 11px;
+            color: var(--text-muted);
+            width: 32px;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
     </style>
 </head>
 <body>
@@ -1609,6 +1791,11 @@
                     :class="{ active: currentPage === 'review' }"
                     @click="currentPage = 'review'; loadReviewReport()"
                 >复盘</button>
+                <button
+                    class="nav-tab"
+                    :class="{ active: currentPage === 'tracker' }"
+                    @click="currentPage = 'tracker'; loadTrackers()"
+                >追踪</button>
             </div>
             <!-- 分析页搜索区域 -->
             <div class="search-area" v-if="currentPage === 'analyze'">
@@ -1649,7 +1836,38 @@
         </div>
 
         <!-- 主布局 -->
-        <div class="main-layout" style="position: relative;">
+            <div class="main-layout" style="position: relative;">
+                <!-- ========== 智能体状态面板 ========== -->
+                <div class="agent-status-panel" v-if="currentPage === 'analyze' && (loading || Object.values(agentStates).some(s => s.status !== 'idle'))">
+                    <div class="agent-status-title">智能体运行状态</div>
+                    <div class="agent-status-grid">
+                        <div
+                            class="agent-card"
+                            v-for="(agent, key) in agentStates"
+                            :key="key"
+                            :class="{
+                                'agent-running': agent.status === 'running',
+                                'agent-done': agent.status === 'completed'
+                            }"
+                        >
+                            <div class="agent-card-header">
+                                <span class="agent-card-name">{{ agentNames[key] || key }}</span>
+                                <span class="agent-card-status" :class="'status-' + agent.status">
+                                    {{ agentStatusText(agent.status) }}
+                                </span>
+                            </div>
+                            <div class="agent-card-progress">
+                                <div class="agent-progress-track">
+                                    <div
+                                        class="agent-progress-fill"
+                                        :style="{ width: agent.progress + '%' }"
+                                    ></div>
+                                </div>
+                                <span class="agent-progress-num">{{ agent.progress }}%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             <!-- ========== 分析页面 ========== -->
             <template v-if="currentPage === 'analyze'">
             <!-- 加载遮罩 -->
@@ -2604,6 +2822,155 @@
                     </div>
                 </div>
             </div>
+
+            <!-- ========== 追踪中心页面 ========== -->
+            <div class="page-content" v-if="currentPage === 'tracker'">
+                <!-- 追踪列表 -->
+                <div class="page-section">
+                    <div class="section-title" style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>追踪列表</span>
+                        <button class="btn-analyze" @click="showCreateTracker = true">创建追踪</button>
+                    </div>
+                    <div class="data-table-wrap" v-if="trackers.length">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>股票代码</th>
+                                    <th>股票名称</th>
+                                    <th>当前信号</th>
+                                    <th>追踪天数</th>
+                                    <th>状态</th>
+                                    <th>创建时间</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="t in trackers" :key="t.id">
+                                    <td class="font-mono">{{ t.stock_code }}</td>
+                                    <td>{{ t.stock_name }}</td>
+                                    <td>
+                                        <span class="signal-tag" :class="signalTagClass(t.current_signal)">{{ t.current_signal || '-' }}</span>
+                                    </td>
+                                    <td class="font-mono">{{ t.tracking_days || '-' }}</td>
+                                    <td>
+                                        <span class="tracker-status-tag" :class="t.is_active ? 'status-active' : 'status-inactive'">
+                                            {{ t.is_active ? '追踪中' : '已停止' }}
+                                        </span>
+                                    </td>
+                                    <td style="font-size: 11px; color: var(--text-muted);">{{ t.created_at || '-' }}</td>
+                                    <td>
+                                        <button class="action-btn" @click="viewTrackerDetail(t.id)">详情</button>
+                                        <button class="action-btn" v-if="t.is_active" @click="deactivateTracker(t.id)">停止</button>
+                                        <button class="action-btn action-btn-danger" @click="deleteTracker(t.id)">删除</button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div v-else class="empty-state" style="min-height: 200px;">
+                        <div class="empty-text">暂无追踪记录</div>
+                        <div class="empty-hint">点击"创建追踪"开始追踪股票</div>
+                    </div>
+                </div>
+
+                <!-- 追踪详情面板 -->
+                <div class="page-section" v-if="trackerDetail">
+                    <div class="section-title" style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>追踪详情 - {{ trackerDetail.stock_name }} ({{ trackerDetail.stock_code }})</span>
+                        <button class="btn-cancel" @click="trackerDetail = null" style="padding: 2px 12px; font-size: 12px;">关闭</button>
+                    </div>
+                    <!-- 投资逻辑 -->
+                    <div class="tracker-thesis" v-if="trackerDetail.thesis">
+                        <div class="tech-block-title">投资逻辑</div>
+                        <div class="thesis-section" v-if="trackerDetail.thesis.reasons && trackerDetail.thesis.reasons.length">
+                            <div class="thesis-label">买入理由</div>
+                            <div class="thesis-item" v-for="(r, idx) in trackerDetail.thesis.reasons" :key="'r'+idx">{{ r }}</div>
+                        </div>
+                        <div class="thesis-section" v-if="trackerDetail.thesis.watch_indicators && trackerDetail.thesis.watch_indicators.length">
+                            <div class="thesis-label">观察指标</div>
+                            <div class="thesis-item" v-for="(w, idx) in trackerDetail.thesis.watch_indicators" :key="'w'+idx">{{ w }}</div>
+                        </div>
+                        <div class="thesis-section" v-if="trackerDetail.thesis.exit_conditions && trackerDetail.thesis.exit_conditions.length">
+                            <div class="thesis-label">退出条件</div>
+                            <div class="thesis-item" v-for="(e, idx) in trackerDetail.thesis.exit_conditions" :key="'e'+idx">{{ e }}</div>
+                        </div>
+                        <div class="thesis-section" v-if="trackerDetail.thesis.stop_loss_price || trackerDetail.thesis.profit_target_price">
+                            <div class="thesis-label">价格目标</div>
+                            <div class="thesis-price-row">
+                                <span v-if="trackerDetail.thesis.stop_loss_price">止损价: <span class="font-mono color-down">{{ trackerDetail.thesis.stop_loss_price }}</span></span>
+                                <span v-if="trackerDetail.thesis.profit_target_price">止盈价: <span class="font-mono color-up">{{ trackerDetail.thesis.profit_target_price }}</span></span>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 信号变化时间线 -->
+                    <div class="tech-block-title" style="margin-top: 16px;">信号变化时间线</div>
+                    <div class="signal-timeline-chart" ref="signalTimelineChart"></div>
+                    <!-- 历史分析对比 -->
+                    <div class="tech-block-title" style="margin-top: 16px;">历史分析对比</div>
+                    <div class="data-table-wrap" v-if="trackerDetail.history_analyses && trackerDetail.history_analyses.length">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>分析时间</th>
+                                    <th>综合信号</th>
+                                    <th>置信度</th>
+                                    <th>风险等级</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="h in trackerDetail.history_analyses" :key="h.id || h.timestamp">
+                                    <td style="font-size: 11px; color: var(--text-muted);">{{ h.timestamp || '-' }}</td>
+                                    <td><span class="signal-tag" :class="signalTagClass(h.final_signal)">{{ h.final_signal || '-' }}</span></td>
+                                    <td class="font-mono">{{ h.final_confidence != null ? h.final_confidence + '%' : '-' }}</td>
+                                    <td>{{ h.risk_level || '-' }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div v-else style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px 0;">
+                        暂无历史分析记录
+                    </div>
+                </div>
+
+                <!-- 创建追踪对话框 -->
+                <div class="dialog-overlay" v-if="showCreateTracker" @click.self="showCreateTracker = false">
+                    <div class="dialog-box" style="max-width: 560px;">
+                        <div class="dialog-title">创建追踪</div>
+                        <div class="dialog-field">
+                            <label>股票代码 *</label>
+                            <input v-model="newTracker.stock_code" placeholder="如 600519.SH">
+                        </div>
+                        <div class="dialog-field">
+                            <label>股票名称 *</label>
+                            <input v-model="newTracker.stock_name" placeholder="如 贵州茅台">
+                        </div>
+                        <div class="dialog-field">
+                            <label>买入理由（每行一条）</label>
+                            <textarea v-model="newTracker.thesis.reasonsText" rows="3" placeholder="如：业绩稳定增长&#10;行业龙头地位"></textarea>
+                        </div>
+                        <div class="dialog-field">
+                            <label>观察指标（每行一条）</label>
+                            <textarea v-model="newTracker.thesis.watchIndicatorsText" rows="2" placeholder="如：MACD金叉&#10;北向资金流入"></textarea>
+                        </div>
+                        <div class="dialog-field">
+                            <label>退出条件（每行一条）</label>
+                            <textarea v-model="newTracker.thesis.exitConditionsText" rows="2" placeholder="如：跌破20日均线&#10;基本面恶化"></textarea>
+                        </div>
+                        <div class="dialog-field">
+                            <label>止损价</label>
+                            <input v-model.number="newTracker.thesis.stop_loss_price" type="number" placeholder="选填">
+                        </div>
+                        <div class="dialog-field">
+                            <label>止盈价</label>
+                            <input v-model.number="newTracker.thesis.profit_target_price" type="number" placeholder="选填">
+                        </div>
+                        <div class="dialog-actions">
+                            <button class="btn-analyze" @click="createTracker">确认创建</button>
+                            <button class="btn-cancel" @click="showCreateTracker = false">取消</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -2716,6 +3083,59 @@
                     reviewPeriod: 'month',
                     /** 复盘报告 */
                     reviewReport: {},
+
+                    /* ===== 追踪中心数据 ===== */
+                    /** 追踪列表 */
+                    trackers: [],
+                    /** 当前查看的追踪详情 */
+                    trackerDetail: null,
+                    /** 是否显示创建追踪对话框 */
+                    showCreateTracker: false,
+                    /** 新建追踪表单 */
+                    newTracker: {
+                        stock_code: '',
+                        stock_name: '',
+                        thesis: {
+                            reasons: [],
+                            watch_indicators: [],
+                            exit_conditions: [],
+                            stop_loss_price: null,
+                            profit_target_price: null,
+                            reasonsText: '',
+                            watchIndicatorsText: '',
+                            exitConditionsText: '',
+                        },
+                    },
+                    /** 信号时间线图表实例 */
+                    signalTimelineChart: null,
+
+                    /* ===== WebSocket & 智能体状态 ===== */
+                    /** WebSocket连接实例 */
+                    ws: null,
+                    /** 智能体运行状态 */
+                    agentStates: {
+                        data_fetcher: { status: 'idle', progress: 0 },
+                        technical: { status: 'idle', progress: 0 },
+                        fundamental: { status: 'idle', progress: 0 },
+                        sentiment: { status: 'idle', progress: 0 },
+                        news: { status: 'idle', progress: 0 },
+                        bull: { status: 'idle', progress: 0 },
+                        bear: { status: 'idle', progress: 0 },
+                        risk: { status: 'idle', progress: 0 },
+                    },
+                    /** 智能体名称映射 */
+                    agentNames: {
+                        data_fetcher: '数据获取',
+                        technical: '技术分析',
+                        fundamental: '基本面分析',
+                        sentiment: '情绪分析',
+                        news: '新闻分析',
+                        bull: '多头辩论',
+                        bear: '空头辩论',
+                        risk: '风险评估',
+                    },
+                    /** 智能体进度模拟定时器 */
+                    agentSimTimer: null,
                 };
             },
 
@@ -2806,6 +3226,9 @@
                     this.currentStep = 0;
 
                     this.startStepProgress();
+                    this.resetAgentStates();
+                    this.connectWebSocket();
+                    this.simulateAgentProgress();
 
                     try {
                         const response = await fetch('/api/analyze', {
@@ -2834,6 +3257,8 @@
                         alert('分析失败: ' + error.message);
                     } finally {
                         this.stopStepProgress();
+                        this.stopAgentSimulation();
+                        this.disconnectWebSocket();
                         this.loading = false;
                     }
                 },
@@ -3291,6 +3716,7 @@
                     if (this.klineChartInstance) this.klineChartInstance.resize();
                     if (this.gaugeChartInstance) this.gaugeChartInstance.resize();
                     if (this.radarChartInstance) this.radarChartInstance.resize();
+                    if (this.signalTimelineChart) this.signalTimelineChart.resize();
                 },
 
                 /* ===== 选股器方法 ===== */
@@ -3525,6 +3951,376 @@
                         console.error('加载复盘报告失败:', e);
                     }
                 },
+
+                /* ===== 追踪中心方法 ===== */
+
+                /**
+                 * 加载追踪列表
+                 */
+                async loadTrackers() {
+                    try {
+                        const res = await fetch('/api/trackers');
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.trackers = data.trackers || data || [];
+                        }
+                    } catch (e) {
+                        console.error('加载追踪列表失败:', e);
+                    }
+                },
+
+                /**
+                 * 创建追踪
+                 */
+                async createTracker() {
+                    if (!this.newTracker.stock_code || !this.newTracker.stock_name) {
+                        alert('请填写股票代码和名称');
+                        return;
+                    }
+                    const thesis = {
+                        reasons: this.newTracker.thesis.reasonsText
+                            ? this.newTracker.thesis.reasonsText.split('\n').filter(s => s.trim())
+                            : [],
+                        watch_indicators: this.newTracker.thesis.watchIndicatorsText
+                            ? this.newTracker.thesis.watchIndicatorsText.split('\n').filter(s => s.trim())
+                            : [],
+                        exit_conditions: this.newTracker.thesis.exitConditionsText
+                            ? this.newTracker.thesis.exitConditionsText.split('\n').filter(s => s.trim())
+                            : [],
+                        stop_loss_price: this.newTracker.thesis.stop_loss_price || null,
+                        profit_target_price: this.newTracker.thesis.profit_target_price || null,
+                    };
+                    try {
+                        const res = await fetch('/api/trackers', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                stock_code: this.newTracker.stock_code,
+                                stock_name: this.newTracker.stock_name,
+                                thesis: thesis,
+                            }),
+                        });
+                        if (res.ok) {
+                            this.showCreateTracker = false;
+                            this.newTracker = {
+                                stock_code: '',
+                                stock_name: '',
+                                thesis: {
+                                    reasons: [],
+                                    watch_indicators: [],
+                                    exit_conditions: [],
+                                    stop_loss_price: null,
+                                    profit_target_price: null,
+                                    reasonsText: '',
+                                    watchIndicatorsText: '',
+                                    exitConditionsText: '',
+                                },
+                            };
+                            this.loadTrackers();
+                        } else {
+                            const err = await res.json().catch(() => ({}));
+                            alert('创建追踪失败: ' + (err.detail || '未知错误'));
+                        }
+                    } catch (e) {
+                        console.error('创建追踪失败:', e);
+                        alert('创建追踪失败: ' + e.message);
+                    }
+                },
+
+                /**
+                 * 查看追踪详情
+                 * @param {number|string} id - 追踪ID
+                 */
+                async viewTrackerDetail(id) {
+                    try {
+                        const res = await fetch('/api/trackers/' + id);
+                        if (res.ok) {
+                            this.trackerDetail = await res.json();
+                            await this.$nextTick();
+                            this.loadSignalTimeline(id);
+                        }
+                    } catch (e) {
+                        console.error('加载追踪详情失败:', e);
+                    }
+                },
+
+                /**
+                 * 停止追踪
+                 * @param {number|string} id - 追踪ID
+                 */
+                async deactivateTracker(id) {
+                    try {
+                        const res = await fetch('/api/trackers/' + id + '/deactivate', { method: 'POST' });
+                        if (res.ok) {
+                            this.loadTrackers();
+                        }
+                    } catch (e) {
+                        console.error('停止追踪失败:', e);
+                    }
+                },
+
+                /**
+                 * 删除追踪
+                 * @param {number|string} id - 追踪ID
+                 */
+                async deleteTracker(id) {
+                    if (!confirm('确认删除该追踪记录？')) return;
+                    try {
+                        const res = await fetch('/api/trackers/' + id, { method: 'DELETE' });
+                        if (res.ok) {
+                            this.loadTrackers();
+                            if (this.trackerDetail && this.trackerDetail.id === id) {
+                                this.trackerDetail = null;
+                            }
+                        }
+                    } catch (e) {
+                        console.error('删除追踪失败:', e);
+                    }
+                },
+
+                /**
+                 * 加载信号时间线并渲染ECharts图表
+                 * @param {number|string} id - 追踪ID
+                 */
+                async loadSignalTimeline(id) {
+                    try {
+                        const res = await fetch('/api/trackers/' + id + '/timeline');
+                        if (!res.ok) return;
+                        const data = await res.json();
+                        const timeline = data.timeline || [];
+                        if (!timeline.length) return;
+
+                        const el = this.$refs.signalTimelineChart;
+                        if (!el) return;
+
+                        if (this.signalTimelineChart) {
+                            this.signalTimelineChart.dispose();
+                        }
+                        this.signalTimelineChart = echarts.init(el, 'dark');
+
+                        const dates = timeline.map(t => t.date);
+                        const scores = timeline.map(t => t.score || 0);
+                        const signals = timeline.map(t => t.signal || '持有');
+
+                        /** 根据信号类型生成散点数据 */
+                        const buyPoints = [];
+                        const sellPoints = [];
+                        const holdPoints = [];
+                        timeline.forEach((t, idx) => {
+                            const point = { value: [t.date, t.score || 0], signal: t.signal };
+                            if (t.signal && t.signal.includes('买入')) {
+                                buyPoints.push([t.date, t.score || 0]);
+                            } else if (t.signal && t.signal.includes('卖出')) {
+                                sellPoints.push([t.date, t.score || 0]);
+                            } else {
+                                holdPoints.push([t.date, t.score || 0]);
+                            }
+                        });
+
+                        const option = {
+                            backgroundColor: 'transparent',
+                            tooltip: {
+                                trigger: 'axis',
+                                backgroundColor: 'rgba(22,27,34,0.95)',
+                                borderColor: '#30363d',
+                                textStyle: { color: '#e6edf3', fontSize: 12 },
+                            },
+                            grid: { left: 50, right: 20, top: 30, bottom: 30 },
+                            xAxis: {
+                                type: 'category',
+                                data: dates,
+                                axisLine: { lineStyle: { color: '#30363d' } },
+                                axisLabel: { color: '#6e7681', fontSize: 10 },
+                                splitLine: { show: false },
+                            },
+                            yAxis: {
+                                type: 'value',
+                                min: 0,
+                                max: 100,
+                                axisLine: { lineStyle: { color: '#30363d' } },
+                                axisLabel: { color: '#6e7681', fontSize: 10 },
+                                splitLine: { lineStyle: { color: '#21262d' } },
+                            },
+                            series: [
+                                {
+                                    name: '评分',
+                                    type: 'line',
+                                    data: scores,
+                                    smooth: true,
+                                    showSymbol: false,
+                                    lineStyle: { width: 2, color: '#58a6ff' },
+                                    areaStyle: { color: 'rgba(88, 166, 255, 0.08)' },
+                                },
+                                {
+                                    name: '买入信号',
+                                    type: 'scatter',
+                                    data: buyPoints,
+                                    symbolSize: 10,
+                                    itemStyle: { color: '#f85149' },
+                                },
+                                {
+                                    name: '卖出信号',
+                                    type: 'scatter',
+                                    data: sellPoints,
+                                    symbolSize: 10,
+                                    itemStyle: { color: '#3fb950' },
+                                },
+                                {
+                                    name: '持有信号',
+                                    type: 'scatter',
+                                    data: holdPoints,
+                                    symbolSize: 6,
+                                    itemStyle: { color: '#d29922' },
+                                },
+                            ],
+                        };
+
+                        this.signalTimelineChart.setOption(option);
+                    } catch (e) {
+                        console.error('加载信号时间线失败:', e);
+                    }
+                },
+
+                /* ===== WebSocket & 智能体状态方法 ===== */
+
+                /**
+                 * 连接WebSocket
+                 */
+                connectWebSocket() {
+                    try {
+                        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                        const wsUrl = protocol + '//' + location.host + '/ws';
+                        this.ws = new WebSocket(wsUrl);
+
+                        this.ws.onmessage = (event) => {
+                            try {
+                                const msg = JSON.parse(event.data);
+                                this.handleWSMessage(msg);
+                            } catch (e) {
+                                console.warn('解析WebSocket消息失败:', e);
+                            }
+                        };
+
+                        this.ws.onerror = (error) => {
+                            console.warn('WebSocket连接错误:', error);
+                        };
+
+                        this.ws.onclose = () => {
+                            this.ws = null;
+                        };
+                    } catch (e) {
+                        console.warn('WebSocket连接失败:', e);
+                    }
+                },
+
+                /**
+                 * 断开WebSocket
+                 */
+                disconnectWebSocket() {
+                    if (this.ws) {
+                        this.ws.close();
+                        this.ws = null;
+                    }
+                },
+
+                /**
+                 * 处理WebSocket消息，更新智能体状态
+                 * @param {Object} msg - WebSocket消息对象
+                 */
+                handleWSMessage(msg) {
+                    if (msg.type === 'agent_status' && msg.agent && this.agentStates[msg.agent]) {
+                        this.agentStates[msg.agent].status = msg.status || 'idle';
+                        if (msg.progress != null) {
+                            this.agentStates[msg.agent].progress = Math.min(100, msg.progress);
+                        }
+                    }
+                    if (msg.type === 'analysis_complete') {
+                        Object.keys(this.agentStates).forEach(key => {
+                            this.agentStates[key].status = 'completed';
+                            this.agentStates[key].progress = 100;
+                        });
+                    }
+                },
+
+                /**
+                 * 重置所有智能体状态为idle
+                 */
+                resetAgentStates() {
+                    Object.keys(this.agentStates).forEach(key => {
+                        this.agentStates[key] = { status: 'idle', progress: 0 };
+                    });
+                },
+
+                /**
+                 * 模拟智能体进度更新（后端分析为同步时前端模拟）
+                 */
+                simulateAgentProgress() {
+                    const agentOrder = [
+                        'data_fetcher',
+                        'technical',
+                        'fundamental',
+                        'sentiment',
+                        'news',
+                        'bull',
+                        'bear',
+                        'risk',
+                    ];
+                    let currentIdx = 0;
+                    let currentProgress = 0;
+
+                    this.agentSimTimer = setInterval(() => {
+                        if (currentIdx >= agentOrder.length) {
+                            clearInterval(this.agentSimTimer);
+                            this.agentSimTimer = null;
+                            return;
+                        }
+
+                        const agentKey = agentOrder[currentIdx];
+                        currentProgress += Math.floor(Math.random() * 15) + 5;
+
+                        if (currentProgress >= 100) {
+                            currentProgress = 100;
+                            this.agentStates[agentKey].status = 'completed';
+                            this.agentStates[agentKey].progress = 100;
+                            currentIdx++;
+                            currentProgress = 0;
+                            if (currentIdx < agentOrder.length) {
+                                this.agentStates[agentOrder[currentIdx]].status = 'running';
+                                this.agentStates[agentOrder[currentIdx]].progress = 0;
+                            }
+                        } else {
+                            this.agentStates[agentKey].status = 'running';
+                            this.agentStates[agentKey].progress = currentProgress;
+                        }
+                    }, 800);
+                },
+
+                /**
+                 * 停止智能体进度模拟
+                 */
+                stopAgentSimulation() {
+                    if (this.agentSimTimer) {
+                        clearInterval(this.agentSimTimer);
+                        this.agentSimTimer = null;
+                    }
+                    /** 标记所有智能体为已完成 */
+                    Object.keys(this.agentStates).forEach(key => {
+                        if (this.agentStates[key].status === 'running') {
+                            this.agentStates[key].status = 'completed';
+                            this.agentStates[key].progress = 100;
+                        }
+                    });
+                },
+
+                /**
+                 * 智能体状态文字
+                 * @param {string} status - 状态标识
+                 * @returns {string}
+                 */
+                agentStatusText(status) {
+                    const map = { idle: '空闲', running: '运行中', completed: '已完成' };
+                    return map[status] || status;
+                },
             },
 
             mounted() {
@@ -3536,7 +4332,10 @@
                 if (this.klineChartInstance) this.klineChartInstance.dispose();
                 if (this.gaugeChartInstance) this.gaugeChartInstance.dispose();
                 if (this.radarChartInstance) this.radarChartInstance.dispose();
+                if (this.signalTimelineChart) this.signalTimelineChart.dispose();
                 if (this.stepTimer) clearInterval(this.stepTimer);
+                if (this.agentSimTimer) clearInterval(this.agentSimTimer);
+                this.disconnectWebSocket();
             },
         }).mount('#app');
     </script>

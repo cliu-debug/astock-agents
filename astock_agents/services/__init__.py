@@ -1,4 +1,4 @@
-"""投资系统服务层 - 选股、自选股、模拟交易、复盘、回测、组合风险分析、监控、调度、通知"""
+"""投资系统服务层 - 选股、自选股、模拟交易、复盘、回测、组合风险分析、监控、调度、通知、追踪、历史分析"""
 
 from astock_agents.services.screener import StockScreener
 from astock_agents.services.watchlist import WatchlistManager
@@ -9,6 +9,8 @@ from astock_agents.services.portfolio_risk import PortfolioRiskAnalyzer
 from astock_agents.services.metrics import MetricsCollector, get_metrics_collector
 from astock_agents.services.scheduler import SchedulerService, get_scheduler
 from astock_agents.services.notification import NotificationService, get_notification_service
+from astock_agents.services.tracker import TrackerService, get_tracker_service
+from astock_agents.services.analysis_history import AnalysisHistoryService, get_analysis_history_service
 
 __all__ = [
     "StockScreener",
@@ -23,4 +25,8 @@ __all__ = [
     "get_scheduler",
     "NotificationService",
     "get_notification_service",
+    "TrackerService",
+    "get_tracker_service",
+    "AnalysisHistoryService",
+    "get_analysis_history_service",
 ]
