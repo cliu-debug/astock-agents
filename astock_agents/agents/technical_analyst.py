@@ -74,12 +74,19 @@ class TechnicalAnalyst(BaseAgent):
         
         # 生成综合信号
         signal, confidence = self._generate_comprehensive_signal(df, indicators, trend, patterns)
-        
+
         # 生成分析摘要
         summary = self._generate_summary(
             stock_data, trend, indicators, patterns, signal
         )
-        
+
+        # 确保所有numpy类型转为Python原生类型（避免Pydantic序列化失败）
+        indicators = self._sanitize_numpy(indicators)
+        support_levels = [float(x) for x in support_levels]
+        resistance_levels = [float(x) for x in resistance_levels]
+        trend_strength = int(trend_strength)
+        confidence = int(confidence)
+
         analysis = TechnicalAnalysis(
             trend=trend,
             trend_strength=trend_strength,
@@ -1075,7 +1082,27 @@ class TechnicalAnalyst(BaseAgent):
                 score -= 8
         
         return max(0, min(100, score))
-    
+
+    # ==================== 工具方法 ====================
+
+    @staticmethod
+    def _sanitize_numpy(obj):
+        """递归转换numpy类型为Python原生类型，避免Pydantic序列化失败"""
+        import numpy as np
+        if isinstance(obj, dict):
+            return {k: TechnicalAnalyst._sanitize_numpy(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [TechnicalAnalyst._sanitize_numpy(v) for v in obj]
+        elif isinstance(obj, (np.integer,)):
+            return int(obj)
+        elif isinstance(obj, (np.floating,)):
+            return float(obj)
+        elif isinstance(obj, (np.bool_,)):
+            return bool(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return obj
+
     # ==================== 报告生成 ====================
     
     def _generate_summary(

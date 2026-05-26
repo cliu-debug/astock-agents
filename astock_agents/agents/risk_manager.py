@@ -72,7 +72,15 @@ class RiskManager(BaseAgent):
         approved, approval_notes = self._make_decision(
             trade_proposal, risk_score, risk_level
         )
-        
+
+        # 确保所有值为Python原生类型（避免numpy类型序列化失败）
+        risk_score = int(risk_score)
+        market_risk = int(market_risk)
+        liquidity_risk = int(liquidity_risk)
+        volatility_risk = int(volatility_risk)
+        fundamental_risk = int(fundamental_risk)
+        approved = bool(approved)
+
         assessment = RiskAssessment(
             risk_level=risk_level,
             risk_score=risk_score,

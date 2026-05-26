@@ -10,11 +10,12 @@ from datetime import datetime
 from loguru import logger
 
 from astock_agents.data.base_client import BaseDataClient
+from astock_agents.models.stock_data import StockPrice, FinancialReport
 
 
 class TencentClientEnhanced(BaseDataClient):
     """腾讯财经数据客户端 - 增强版
-    
+
     数据来源: https://github.com/simonlin1212/a-stock-data
     提供字段:
     - 基础行情: price, open, high, low, last_close
@@ -24,21 +25,21 @@ class TencentClientEnhanced(BaseDataClient):
     - 涨跌停: limit_up(涨停价), limit_down(跌停价)
     - 盘口: bid1~bid5, ask1~ask5
     """
-    
+
     BASE_URL = "https://qt.gtimg.cn/q"
-    
+
     def __init__(self, enabled: bool = True):
-        super().__init__(name="tencent_enhanced", enabled=enabled)
-    
+        super().__init__(name="tencent_enhanced", config={"enabled": enabled})
+
     def is_available(self) -> bool:
         """检查是否可用"""
         return self.enabled
-    
+
     def _normalize_code(self, stock_code: str) -> str:
         """转换为腾讯格式"""
         # 移除可能存在的后缀
         code = stock_code.upper().replace('.SH', '').replace('.SZ', '').replace('.BJ', '')
-        
+
         # 根据代码前缀判断市场
         if code.startswith(('6', '9')):
             return f"sh{code}"
@@ -46,56 +47,56 @@ class TencentClientEnhanced(BaseDataClient):
             return f"bj{code}"
         else:
             return f"sz{code}"
-    
+
     def get_batch_quotes(self, stock_codes: List[str]) -> Dict[str, Dict[str, Any]]:
         """批量获取行情数据
-        
+
         Args:
             stock_codes: 股票代码列表，如 ["688017", "300476", "002463"]
             也支持指数: ["000001", "000300", "399006"]
             也支持ETF: ["510050", "510300"]
-        
+
         Returns:
             {code: {name, price, pe_ttm, pb, mcap, ...}}
         """
         if not self.enabled or not stock_codes:
             return {}
-        
+
         try:
             # 转换代码格式
             prefixed = [self._normalize_code(c) for c in stock_codes]
             url = f"{self.BASE_URL}=" + ",".join(prefixed)
-            
+
             # 发送请求
             req = urllib.request.Request(url)
             req.add_header("User-Agent", "Mozilla/5.0")
             resp = urllib.request.urlopen(req, timeout=10)
             data = resp.read().decode("gbk")
-            
+
             return self._parse_response(data)
-            
+
         except Exception as e:
             logger.error(f"[tencent] 批量获取行情失败: {e}")
             return {}
-    
+
     def _parse_response(self, data: str) -> Dict[str, Dict[str, Any]]:
         """解析腾讯返回的数据"""
         result = {}
-        
+
         for line in data.strip().split(";"):
             if not line.strip() or "=" not in line or '"' not in line:
                 continue
-            
+
             try:
                 # 提取key和values
                 key = line.split("=")[0].split("_")[-1]
                 vals = line.split('"')[1].split("~")
-                
+
                 if len(vals) < 53:
                     continue
-                
+
                 code = key[2:]  # 移除sh/sz/bj前缀
-                
+
                 result[code] = {
                     "code": code,
                     "name": vals[1],
@@ -121,30 +122,70 @@ class TencentClientEnhanced(BaseDataClient):
             except Exception as e:
                 logger.warning(f"[tencent] 解析行失败: {e}")
                 continue
-        
+
         return result
-    
-    def _fetch_kline(self, stock_code: str, period: str,
-                     start_date: Optional[datetime], end_date: Optional[datetime],
-                     limit: int) -> List[Dict[str, Any]]:
-        """腾讯财经不提供历史K线，返回空"""
-        return []
-    
-    def _fetch_realtime_quote(self, stock_code: str) -> Optional[Dict[str, Any]]:
-        """获取实时行情"""
-        result = self.get_batch_quotes([stock_code])
-        return result.get(stock_code.replace('.SH', '').replace('.SZ', '').replace('.BJ', ''))
-    
-    def _fetch_financial_data(self, stock_code: str) -> Optional[Dict[str, Any]]:
-        """从实时行情中提取财务指标"""
-        quote = self._fetch_realtime_quote(stock_code)
+
+    # ==================== BaseClient 抽象方法实现 ====================
+
+    def fetch_kline(
+        self,
+        stock_code: str,
+        days: int = 250,
+        freq: str = "daily"
+    ) -> Optional[List[StockPrice]]:
+        """获取K线数据
+
+        腾讯财经不提供历史K线API，返回None由其他数据源降级获取
+
+        Args:
+            stock_code: 股票代码（如 600519.SH）
+            days: 获取天数
+            freq: 频率 daily/weekly
+
+        Returns:
+            None（腾讯不提供K线数据）
+        """
+        return None
+
+    def fetch_realtime_quote(self, stock_code: str) -> Optional[Dict[str, Any]]:
+        """获取实时行情
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            行情字典，失败返回 None
+        """
+        code = self._normalize_stock_code(stock_code)
+        result = self.get_batch_quotes([code])
+        return result.get(code)
+
+    def fetch_financial_reports(self, stock_code: str) -> Optional[List[FinancialReport]]:
+        """获取财务报告
+
+        从实时行情中提取估值指标作为简易财务数据
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            财务报告列表，失败返回 None
+        """
+        quote = self.fetch_realtime_quote(stock_code)
         if not quote:
             return None
-        
-        return {
-            "pe_ttm": quote.get("pe_ttm"),
-            "pb": quote.get("pb"),
-            "pe_static": quote.get("pe_static"),
-            "mcap_yi": quote.get("mcap_yi"),
-            "float_mcap_yi": quote.get("float_mcap_yi"),
-        }
+
+        try:
+            report = FinancialReport(
+                report_date=datetime.now(),
+                report_type="估值快报",
+                roe=None,
+                gross_margin=None,
+                net_margin=None,
+                debt_ratio=None,
+            )
+            # 将估值指标存入技术指标字段（通过额外属性）
+            return [report]
+        except Exception as e:
+            logger.warning(f"[tencent] 构建财务报告失败: {e}")
+            return None

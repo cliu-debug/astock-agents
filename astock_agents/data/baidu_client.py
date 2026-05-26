@@ -10,6 +10,7 @@ from datetime import datetime
 from loguru import logger
 
 from astock_agents.data.base_client import BaseDataClient
+from astock_agents.models.stock_data import StockPrice, FinancialReport
 
 
 class BaiduClient(BaseDataClient):
@@ -27,7 +28,7 @@ class BaiduClient(BaseDataClient):
     CONCEPT_URL = "https://gushitong.baidu.com/opendata"
     
     def __init__(self, enabled: bool = True):
-        super().__init__(name="baidu", enabled=enabled)
+        super().__init__(name="baidu", config={"enabled": enabled})
         self._session = requests.Session()
         self._session.headers.update({
             "User-Agent": "Mozilla/5.0",
@@ -132,65 +133,111 @@ class BaiduClient(BaseDataClient):
         return {}
     
     # ==================== BaseClient接口实现 ====================
-    
-    def _fetch_kline(self, stock_code: str, period: str,
-                     start_date: Optional[datetime], end_date: Optional[datetime],
-                     limit: int) -> List[Dict[str, Any]]:
-        """获取K线数据"""
-        data = self.get_kline_with_ma(stock_code)
-        
-        if not data or not data.get("rows"):
-            return []
-        
-        # 解析K线数据
-        keys = data.get("keys", [])
-        rows = data.get("rows", [])
-        
-        klines = []
-        for row in rows:
-            if not row:
-                continue
-            
-            values = row.split(",")
-            if len(values) < len(keys):
-                continue
-            
-            # 构建字典
-            item = {}
-            for i, key in enumerate(keys):
-                if i < len(values):
+
+    def fetch_kline(
+        self,
+        stock_code: str,
+        days: int = 250,
+        freq: str = "daily"
+    ) -> Optional[List[StockPrice]]:
+        """获取K线数据
+
+        通过百度股市通API获取K线数据（自带MA5/MA10/MA20）
+
+        Args:
+            stock_code: 股票代码（如 600519.SH）
+            days: 获取天数
+            freq: 频率 daily/weekly
+
+        Returns:
+            价格列表，失败返回 None
+        """
+        try:
+            code = self._normalize_stock_code(stock_code)
+            data = self.get_kline_with_ma(code)
+
+            if not data or not data.get("rows"):
+                return None
+
+            keys = data.get("keys", [])
+            rows = data.get("rows", [])
+
+            prices = []
+            for row in rows[-days:]:
+                if not row:
+                    continue
+
+                values = row.split(",")
+                if len(values) < len(keys):
+                    continue
+
+                # 构建价格数据字典
+                price_data = {}
+                for i, key in enumerate(keys):
+                    if i < len(values):
+                        try:
+                            price_data[key] = float(values[i]) if "." in values[i] else int(values[i])
+                        except (ValueError, TypeError):
+                            price_data[key] = values[i]
+
+                # 解析时间
+                time_str = str(price_data.get("time", ""))
+                if len(time_str) >= 8:
                     try:
-                        # 尝试转换为数字
-                        item[key] = float(values[i]) if "." in values[i] else int(values[i])
+                        date = datetime.strptime(time_str[:8], "%Y%m%d")
                     except (ValueError, TypeError):
-                        item[key] = values[i]
-            
-            klines.append(item)
-        
-        return klines
-    
-    def _fetch_realtime_quote(self, stock_code: str) -> Optional[Dict[str, Any]]:
-        """获取实时行情"""
-        # 从K线数据中获取最新一条
-        klines = self._fetch_kline(stock_code, "daily", None, None, 1)
-        
-        if klines:
-            latest = klines[-1]
+                        date = datetime.now()
+                else:
+                    date = datetime.now()
+
+                prices.append(StockPrice(
+                    date=date,
+                    open=price_data.get("open", 0),
+                    high=price_data.get("high", 0),
+                    low=price_data.get("low", 0),
+                    close=price_data.get("close", 0),
+                    volume=price_data.get("volume", 0),
+                ))
+
+            return prices if prices else None
+
+        except Exception as e:
+            logger.warning(f"[baidu] 获取K线数据失败: {e}")
+            return None
+
+    def fetch_realtime_quote(self, stock_code: str) -> Optional[Dict[str, Any]]:
+        """获取实时行情
+
+        从K线数据中获取最新一条记录
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            行情字典，失败返回 None
+        """
+        prices = self.fetch_kline(stock_code, days=1)
+        if prices:
+            latest = prices[-1]
             return {
                 "code": stock_code,
-                "price": latest.get("close"),
-                "open": latest.get("open"),
-                "high": latest.get("high"),
-                "low": latest.get("low"),
-                "volume": latest.get("volume"),
-                "ma5": latest.get("ma5avgprice"),
-                "ma10": latest.get("ma10avgprice"),
-                "ma20": latest.get("ma20avgprice"),
+                "price": latest.close,
+                "open": latest.open,
+                "high": latest.high,
+                "low": latest.low,
+                "volume": latest.volume,
             }
-        
         return None
-    
-    def _fetch_financial_data(self, stock_code: str) -> Optional[Dict[str, Any]]:
-        """获取财务数据"""
-        # 百度不提供财务数据
+
+    def fetch_financial_reports(self, stock_code: str) -> Optional[List[FinancialReport]]:
+        """获取财务报告
+
+        百度不提供财务数据，返回None
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            None
+        """
         return None

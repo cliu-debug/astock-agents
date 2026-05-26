@@ -228,8 +228,20 @@ class AkshareClient(BaseDataClient):
             df = ak.stock_financial_abstract_ths(symbol=code, indicator="按年度")
             if df is not None and not df.empty:
                 for _, row in df.head(3).iterrows():
+                    # 解析报告期日期（可能是 "2024" 或 "2024-01-01" 等格式）
+                    date_str = str(row.get("报告期", ""))[:10]
+                    try:
+                        if len(date_str) >= 10:
+                            report_date = datetime.strptime(date_str, "%Y-%m-%d")
+                        elif len(date_str) >= 4:
+                            report_date = datetime(int(date_str[:4]), 1, 1)
+                        else:
+                            report_date = datetime.now()
+                    except (ValueError, TypeError):
+                        report_date = datetime.now()
+
                     report = FinancialReport(
-                        report_date=datetime.strptime(str(row.get("报告期", "2024-01-01"))[:10], "%Y-%m-%d"),
+                        report_date=report_date,
                         report_type="年报",
                         revenue=self._safe_float(row.get("营业总收入")),
                         net_profit=self._safe_float(row.get("净利润")),

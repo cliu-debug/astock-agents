@@ -276,20 +276,38 @@ async def analyze_stock(request: Request, body: AnalysisRequest):
         # 构建响应
         # 提取价格数据用于K线图
         price_data = None
-        if report.technical and hasattr(report, 'stock_data_ref'):
-            stock_ref = report.stock_data_ref
-            if stock_ref and stock_ref.prices:
-                price_data = [
-                    {
-                        "date": p.date.strftime("%Y-%m-%d"),
-                        "open": p.open,
-                        "high": p.high,
-                        "low": p.low,
-                        "close": p.close,
-                        "volume": p.volume,
-                    }
-                    for p in stock_ref.prices[-120:]
-                ]
+        # 优先从 stock_data_ref 获取
+        if hasattr(report, 'stock_data_ref') and report.stock_data_ref and report.stock_data_ref.prices:
+            price_data = [
+                {
+                    "date": p.date.strftime("%Y-%m-%d"),
+                    "open": p.open,
+                    "high": p.high,
+                    "low": p.low,
+                    "close": p.close,
+                    "volume": p.volume,
+                }
+                for p in report.stock_data_ref.prices[-120:]
+            ]
+        # 降级：从DataManager获取
+        elif report.current_price:
+            try:
+                dm = _get_data_manager()
+                stock_info = dm.get_stock_data(validated_code)
+                if stock_info and stock_info.prices:
+                    price_data = [
+                        {
+                            "date": p.date.strftime("%Y-%m-%d"),
+                            "open": p.open,
+                            "high": p.high,
+                            "low": p.low,
+                            "close": p.close,
+                            "volume": p.volume,
+                        }
+                        for p in stock_info.prices[-120:]
+                    ]
+            except Exception as e:
+                logger.warning(f"[Web] 获取K线数据失败: {e}")
 
         response = AnalysisResponse(
             stock_code=report.stock_code,

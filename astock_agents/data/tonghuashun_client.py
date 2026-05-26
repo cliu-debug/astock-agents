@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from loguru import logger
 
 from astock_agents.data.base_client import BaseDataClient
+from astock_agents.models.stock_data import StockPrice, FinancialReport
 
 
 class TonghuashunClient(BaseDataClient):
@@ -32,7 +33,7 @@ class TonghuashunClient(BaseDataClient):
     UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
     
     def __init__(self, enabled: bool = True, cache_dir: str = "./cache"):
-        super().__init__(name="tonghuashun", enabled=enabled)
+        super().__init__(name="tonghuashun", config={"enabled": enabled})
         self._session = requests.Session()
         self._session.headers.update({
             "User-Agent": self.UA,
@@ -219,25 +220,56 @@ class TonghuashunClient(BaseDataClient):
         return []
     
     # ==================== BaseClient接口实现 ====================
-    
-    def _fetch_kline(self, stock_code: str, period: str,
-                     start_date: Optional[datetime], end_date: Optional[datetime],
-                     limit: int) -> List[Dict[str, Any]]:
-        """同花顺不提供K线数据"""
-        return []
-    
-    def _fetch_realtime_quote(self, stock_code: str) -> Optional[Dict[str, Any]]:
-        """获取实时行情"""
-        # 同花顺没有单股查询接口，从热点列表中查找
-        hot_stocks = self.get_hot_stocks()
-        code = stock_code.replace('.SH', '').replace('.SZ', '')
-        
-        for stock in hot_stocks:
-            if stock["code"] == code:
-                return stock
-        
+
+    def fetch_kline(
+        self,
+        stock_code: str,
+        days: int = 250,
+        freq: str = "daily"
+    ) -> Optional[List[StockPrice]]:
+        """获取K线数据
+
+        同花顺不提供K线API，返回None由其他数据源降级获取
+
+        Args:
+            stock_code: 股票代码（如 600519.SH）
+            days: 获取天数
+            freq: 频率 daily/weekly
+
+        Returns:
+            None（同花顺不提供K线数据）
+        """
         return None
-    
-    def _fetch_financial_data(self, stock_code: str) -> Optional[Dict[str, Any]]:
-        """同花顺不提供财务数据"""
+
+    def fetch_realtime_quote(self, stock_code: str) -> Optional[Dict[str, Any]]:
+        """获取实时行情
+
+        从热点列表中查找目标股票
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            行情字典，失败返回 None
+        """
+        hot_stocks = self.get_hot_stocks()
+        code = self._normalize_stock_code(stock_code)
+
+        for stock in hot_stocks:
+            if stock.get("code") == code:
+                return stock
+
+        return None
+
+    def fetch_financial_reports(self, stock_code: str) -> Optional[List[FinancialReport]]:
+        """获取财务报告
+
+        同花顺不提供财务数据，返回None
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            None
+        """
         return None

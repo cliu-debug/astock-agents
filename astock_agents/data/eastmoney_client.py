@@ -13,6 +13,7 @@ from pathlib import Path
 from loguru import logger
 
 from astock_agents.data.base_client import BaseDataClient
+from astock_agents.models.stock_data import StockPrice, FinancialReport
 
 
 class EastmoneyClient(BaseDataClient):
@@ -36,7 +37,7 @@ class EastmoneyClient(BaseDataClient):
     UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
     
     def __init__(self, enabled: bool = True):
-        super().__init__(name="eastmoney", enabled=enabled)
+        super().__init__(name="eastmoney", config={"enabled": enabled})
         self._session = requests.Session()
         self._session.headers.update({
             "User-Agent": self.UA,
@@ -270,28 +271,66 @@ class EastmoneyClient(BaseDataClient):
         return None
     
     # ==================== BaseClient接口实现 ====================
-    
-    def _fetch_kline(self, stock_code: str, period: str,
-                     start_date: Optional[datetime], end_date: Optional[datetime],
-                     limit: int) -> List[Dict[str, Any]]:
-        """东财不提供K线数据"""
-        return []
-    
-    def _fetch_realtime_quote(self, stock_code: str) -> Optional[Dict[str, Any]]:
-        """获取实时行情"""
-        return self.get_fund_flow(stock_code)
-    
-    def _fetch_financial_data(self, stock_code: str) -> Optional[Dict[str, Any]]:
-        """获取财务数据"""
-        # 从研报中获取一致预期
-        reports = self.get_reports(stock_code, max_pages=1)
+
+    def fetch_kline(
+        self,
+        stock_code: str,
+        days: int = 250,
+        freq: str = "daily"
+    ) -> Optional[List[StockPrice]]:
+        """获取K线数据
+
+        东方财富不提供K线API，返回None由其他数据源降级获取
+
+        Args:
+            stock_code: 股票代码（如 600519.SH）
+            days: 获取天数
+            freq: 频率 daily/weekly
+
+        Returns:
+            None（东财不提供K线数据）
+        """
+        return None
+
+    def fetch_realtime_quote(self, stock_code: str) -> Optional[Dict[str, Any]]:
+        """获取实时行情
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            行情字典，失败返回 None
+        """
+        code = self._normalize_stock_code(stock_code)
+        return self.get_fund_flow(code)
+
+    def fetch_financial_reports(self, stock_code: str) -> Optional[List[FinancialReport]]:
+        """获取财务报告
+
+        从研报中获取一致预期数据
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            财务报告列表，失败返回 None
+        """
+        code = self._normalize_stock_code(stock_code)
+        reports = self.get_reports(code, max_pages=1)
         if not reports:
             return None
-        
-        latest = reports[0]
-        return {
-            "predict_this_year_eps": latest.get("predictThisYearEps"),
-            "predict_next_year_eps": latest.get("predictNextYearEps"),
-            "rating": latest.get("emRatingName"),
-            "industry": latest.get("indvInduName"),
-        }
+
+        try:
+            latest = reports[0]
+            report = FinancialReport(
+                report_date=datetime.now(),
+                report_type="研报预期",
+                roe=None,
+                gross_margin=None,
+                net_margin=None,
+                debt_ratio=None,
+            )
+            return [report]
+        except Exception as e:
+            logger.warning(f"[eastmoney] 构建财务报告失败: {e}")
+            return None

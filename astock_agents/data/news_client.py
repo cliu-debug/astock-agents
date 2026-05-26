@@ -11,6 +11,7 @@ from datetime import datetime
 from loguru import logger
 
 from astock_agents.data.base_client import BaseDataClient
+from astock_agents.models.stock_data import StockPrice, FinancialReport
 
 
 class NewsClient(BaseDataClient):
@@ -32,7 +33,7 @@ class NewsClient(BaseDataClient):
     UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
     
     def __init__(self, enabled: bool = True):
-        super().__init__(name="news", enabled=enabled)
+        super().__init__(name="news", config={"enabled": enabled})
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": self.UA})
     
@@ -147,15 +148,29 @@ class NewsClient(BaseDataClient):
                 "keyWord": stock_code,
                 "maxNum": "10",
             }
-            
+
             r = self._session.post(self.CNINFO_URL, data=search_params, timeout=10)
             d = r.json()
-            
-            if not d.get("data") or not d["data"]:
+
+            # 巨潮搜索API直接返回列表
+            if isinstance(d, list) and len(d) > 0:
+                company = d[0]
+            elif isinstance(d, dict) and d.get("data"):
+                company = d["data"][0]
+            else:
                 return []
-            
-            company = d["data"][0]
-            org_id = company.get("orgId")
+
+            # 提取orgId
+            if isinstance(company, dict):
+                org_id = company.get("orgId")
+            elif isinstance(company, list):
+                org_id = company[0] if len(company) > 0 else None
+            else:
+                org_id = None
+
+            if not org_id:
+                logger.debug(f"[news] 未获取到orgId: {stock_code}")
+                return []
             
             # 获取公告
             announce_params = {
@@ -195,17 +210,49 @@ class NewsClient(BaseDataClient):
         return []
     
     # ==================== BaseClient接口实现 ====================
-    
-    def _fetch_kline(self, stock_code: str, period: str,
-                     start_date: Optional[datetime], end_date: Optional[datetime],
-                     limit: int) -> List[Dict[str, Any]]:
-        """新闻客户端不提供K线数据"""
-        return []
-    
-    def _fetch_realtime_quote(self, stock_code: str) -> Optional[Dict[str, Any]]:
-        """新闻客户端不提供行情数据"""
+
+    def fetch_kline(
+        self,
+        stock_code: str,
+        days: int = 250,
+        freq: str = "daily"
+    ) -> Optional[List[StockPrice]]:
+        """获取K线数据
+
+        新闻客户端不提供K线数据，返回None
+
+        Args:
+            stock_code: 股票代码（如 600519.SH）
+            days: 获取天数
+            freq: 频率 daily/weekly
+
+        Returns:
+            None
+        """
         return None
-    
-    def _fetch_financial_data(self, stock_code: str) -> Optional[Dict[str, Any]]:
-        """新闻客户端不提供财务数据"""
+
+    def fetch_realtime_quote(self, stock_code: str) -> Optional[Dict[str, Any]]:
+        """获取实时行情
+
+        新闻客户端不提供行情数据，返回None
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            None
+        """
+        return None
+
+    def fetch_financial_reports(self, stock_code: str) -> Optional[List[FinancialReport]]:
+        """获取财务报告
+
+        新闻客户端不提供财务数据，返回None
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            None
+        """
         return None
