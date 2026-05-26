@@ -39,6 +39,18 @@ const router = createRouter({
       component: () => import('@/views/TrackerView.vue'),
       meta: { title: '追踪中心' },
     },
+    {
+      path: '/review',
+      name: 'review',
+      component: () => import('@/views/ReviewView.vue'),
+      meta: { title: '复盘' },
+    },
+    {
+      path: '/macro',
+      name: 'macro',
+      component: () => import('@/views/MacroView.vue'),
+      meta: { title: '宏观分析' },
+    },
   ],
 })
 

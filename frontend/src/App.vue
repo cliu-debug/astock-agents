@@ -44,6 +44,18 @@ const navItems = [
     label: '追踪中心',
     icon: 'tracker',
   },
+  {
+    path: '/review',
+    name: 'review',
+    label: '复盘',
+    icon: 'review',
+  },
+  {
+    path: '/macro',
+    name: 'macro',
+    label: '宏观',
+    icon: 'macro',
+  },
 ]
 
 const currentNav = computed(() => route.name as string)
@@ -103,6 +115,14 @@ function navigateTo(path: string) {
           <!-- 追踪中心 -->
           <svg v-else-if="item.icon === 'tracker'" class="nav-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+          </svg>
+          <!-- 复盘 -->
+          <svg v-else-if="item.icon === 'review'" class="nav-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/><path d="M3 12h1M20 12h1M12 3v1M12 20v1"/>
+          </svg>
+          <!-- 宏观 -->
+          <svg v-else-if="item.icon === 'macro'" class="nav-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z"/>
           </svg>
           <span class="nav-label" v-if="!sidebarCollapsed">{{ item.label }}</span>
         </button>

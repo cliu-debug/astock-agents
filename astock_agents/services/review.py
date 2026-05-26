@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from loguru import logger
 
 from astock_agents.models.portfolio import TradeRecord, ReviewReport
+from astock_agents.db.database import Database
 
 
 class ReviewService:
@@ -19,9 +20,17 @@ class ReviewService:
     5. 改进建议生成
     """
 
-    def __init__(self):
+    def __init__(self, db: Optional[Database] = None):
+        """
+        初始化复盘服务
+
+        Args:
+            db: 数据库实例，为空时自动创建默认实例
+        """
+        self._db = db or Database()
         self.records: List[TradeRecord] = []
-        logger.info("[复盘] 初始化完成")
+        self._load_from_db()
+        logger.info(f"[复盘] 初始化完成, 已加载{len(self.records)}条记录")
 
     def add_record(self, record: TradeRecord):
         """添加交易记录"""
@@ -217,3 +226,48 @@ class ReviewService:
         if status:
             return [r for r in self.records if r.status == status]
         return list(self.records)
+
+    def _load_from_db(self):
+        """从数据库加载交易记录"""
+        try:
+            rows = self._db.get_trade_records()
+            for row in rows:
+                record = TradeRecord(
+                    record_id=row.get("record_id", ""),
+                    stock_code=row.get("stock_code", ""),
+                    stock_name=row.get("stock_name", ""),
+                    buy_price=row.get("buy_price"),
+                    buy_quantity=row.get("buy_quantity"),
+                    buy_time=self._parse_datetime(row.get("buy_time")),
+                    buy_reason=row.get("buy_reason"),
+                    sell_price=row.get("sell_price"),
+                    sell_quantity=row.get("sell_quantity"),
+                    sell_time=self._parse_datetime(row.get("sell_time")),
+                    sell_reason=row.get("sell_reason"),
+                    holding_days=row.get("holding_days"),
+                    realized_pnl=row.get("realized_pnl"),
+                    realized_pnl_pct=row.get("realized_pnl_pct"),
+                    status=row.get("status", "持有中"),
+                    signal_at_buy=row.get("signal_at_buy"),
+                    signal_at_sell=row.get("signal_at_sell"),
+                )
+                self.records.append(record)
+        except Exception as e:
+            logger.warning(f"[复盘] 从数据库加载记录失败: {e}")
+
+    @staticmethod
+    def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
+        """解析数据库中的时间字符串
+
+        Args:
+            value: 时间字符串
+
+        Returns:
+            datetime对象，输入为空时返回None
+        """
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value))
+        except (ValueError, TypeError):
+            return None

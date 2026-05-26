@@ -141,8 +141,12 @@ class PaperTradingService:
             "commission": order.commission,
             "stamp_tax": order.stamp_tax,
             "reason": order.reason,
+            "signal_source": order.signal_source,
             "time": datetime.now().isoformat(),
         })
+
+        # 同步写入trade_records表供复盘服务使用
+        self._save_trade_record_to_db(order, fill_price)
 
     def _process_buy(self, order: TradeOrder, price: float, total_cost: float):
         """处理买入
@@ -411,3 +415,67 @@ class PaperTradingService:
             return datetime.fromisoformat(str(value))
         except (ValueError, TypeError):
             return None
+
+    def _save_trade_record_to_db(self, order: TradeOrder, fill_price: float) -> None:
+        """成交后写入trade_records表供复盘服务使用
+
+        买入时创建新记录（状态：持有中），卖出时更新已有记录（状态：已平仓）
+
+        Args:
+            order: 交易订单
+            fill_price: 成交价格
+        """
+        if order.direction == TradeDirection.BUY:
+            # 买入：创建新的交易记录
+            record_id = f"REC-{order.order_id}"
+            self._db.save_trade_record({
+                "record_id": record_id,
+                "stock_code": order.stock_code,
+                "stock_name": order.stock_name,
+                "buy_price": fill_price,
+                "buy_quantity": order.quantity,
+                "buy_time": datetime.now().isoformat(),
+                "buy_reason": order.reason,
+                "status": "持有中",
+                "signal_at_buy": order.signal_source,
+            })
+        else:
+            # 卖出：查找该股票的持有中记录并更新
+            existing_records = self._db.get_trade_records(status="持有中")
+            matching = [r for r in existing_records if r.get("stock_code") == order.stock_code]
+            if matching:
+                record = matching[0]
+                buy_price = record.get("buy_price", 0)
+                buy_quantity = record.get("buy_quantity", 0)
+                realized_pnl = (fill_price - buy_price) * buy_quantity if buy_price else None
+                realized_pnl_pct = round(
+                    (fill_price - buy_price) / buy_price * 100, 2
+                ) if buy_price and buy_price > 0 else None
+                buy_time_str = record.get("buy_time")
+                holding_days = None
+                if buy_time_str:
+                    try:
+                        buy_dt = datetime.fromisoformat(str(buy_time_str))
+                        holding_days = (datetime.now() - buy_dt).days
+                    except (ValueError, TypeError):
+                        pass
+
+                self._db.save_trade_record({
+                    "record_id": record.get("record_id"),
+                    "stock_code": order.stock_code,
+                    "stock_name": order.stock_name,
+                    "buy_price": buy_price,
+                    "buy_quantity": buy_quantity,
+                    "buy_time": buy_time_str,
+                    "buy_reason": record.get("buy_reason"),
+                    "sell_price": fill_price,
+                    "sell_quantity": order.quantity,
+                    "sell_time": datetime.now().isoformat(),
+                    "sell_reason": order.reason,
+                    "holding_days": holding_days,
+                    "realized_pnl": realized_pnl,
+                    "realized_pnl_pct": realized_pnl_pct,
+                    "status": "已平仓",
+                    "signal_at_buy": record.get("signal_at_buy"),
+                    "signal_at_sell": order.signal_source,
+                })
