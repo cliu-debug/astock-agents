@@ -142,11 +142,12 @@ class BacktestRequest(BaseModel):
 @app.get("/", response_class=HTMLResponse)
 @limiter.limit("30/minute")
 async def root(request: Request):
-    """返回主页"""
-    html_path = os.path.join(_CURRENT_DIR, "static", "index.html")
-    if os.path.exists(html_path):
-        with open(html_path, "r", encoding="utf-8") as f:
-            return f.read()
+    """返回主页 - 生产模式下返回Vue构建产物，开发模式下返回提示"""
+    _FRONTEND_DIST = os.path.join(_CURRENT_DIR, "..", "..", "frontend", "dist")
+    index_path = os.path.join(_FRONTEND_DIST, "index.html")
+    if os.path.exists(index_path) and not os.environ.get("ASTOCK_DEV_MODE"):
+        from fastapi.responses import FileResponse
+        return FileResponse(index_path)
     return HTMLResponse(
         "<h1>AStockAgents</h1>"
         "<p>API文档: <a href='/docs'>/docs</a></p>"
@@ -1069,6 +1070,25 @@ async def search_analyses(request: Request, q: str = "", limit: int = 50):
     service = _get_history_service()
     results = service.search_analyses(q, limit=limit)
     return {"success": True, "data": results}
+
+
+# ==================== Vue前端静态文件服务（生产模式） ====================
+
+_FRONTEND_DIST = os.path.join(_CURRENT_DIR, "..", "..", "frontend", "dist")
+if os.path.isdir(_FRONTEND_DIST) and not os.environ.get("ASTOCK_DEV_MODE"):
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount(
+        "/assets",
+        StaticFiles(directory=os.path.join(_FRONTEND_DIST, "assets")),
+        name="assets",
+    )
+
+    @app.get("/{full_path:path}")
+    async def spa_fallback(request: Request, full_path: str):
+        """SPA fallback - 所有非API路由返回index.html"""
+        from fastapi.responses import FileResponse
+        return FileResponse(os.path.join(_FRONTEND_DIST, "index.html"))
 
 
 # ==================== 启动函数 ====================
