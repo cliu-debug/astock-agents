@@ -21,6 +21,7 @@ export const agentColors: Record<string, string> = {
   fundamental: '#8B5CF6',
   sentiment: '#EC4899',
   news: '#F97316',
+  capital_flow: '#14B8A6',
   bull: '#22C55E',
   bear: '#EF4444',
   risk: '#EAB308',

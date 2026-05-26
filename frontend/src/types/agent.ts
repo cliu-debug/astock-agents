@@ -15,6 +15,7 @@ export enum AgentType {
   FUNDAMENTAL_ANALYST = 'fundamental',
   SENTIMENT_ANALYST = 'sentiment',
   NEWS_ANALYST = 'news',
+  CAPITAL_FLOW_ANALYST = 'capital_flow',
   BULL_RESEARCHER = 'bull',
   BEAR_RESEARCHER = 'bear',
   RISK_MANAGER = 'risk',

@@ -64,18 +64,25 @@ const AGENT_CONFIGS: Array<{
     dependencies: [AgentType.DATA_FETCHER],
   },
   {
+    type: AgentType.CAPITAL_FLOW_ANALYST,
+    name: '资金流向分析师',
+    icon: '💰',
+    description: '分析主力资金、北向资金和融资融券动向',
+    dependencies: [AgentType.DATA_FETCHER],
+  },
+  {
     type: AgentType.BULL_RESEARCHER,
     name: '多头研究员',
     icon: '🐂',
     description: '从看多角度论证买入理由',
-    dependencies: [AgentType.TECHNICAL_ANALYST, AgentType.FUNDAMENTAL_ANALYST, AgentType.SENTIMENT_ANALYST, AgentType.NEWS_ANALYST],
+    dependencies: [AgentType.TECHNICAL_ANALYST, AgentType.FUNDAMENTAL_ANALYST, AgentType.SENTIMENT_ANALYST, AgentType.NEWS_ANALYST, AgentType.CAPITAL_FLOW_ANALYST],
   },
   {
     type: AgentType.BEAR_RESEARCHER,
     name: '空头研究员',
     icon: '🐻',
     description: '从看空角度论证卖出理由',
-    dependencies: [AgentType.TECHNICAL_ANALYST, AgentType.FUNDAMENTAL_ANALYST, AgentType.SENTIMENT_ANALYST, AgentType.NEWS_ANALYST],
+    dependencies: [AgentType.TECHNICAL_ANALYST, AgentType.FUNDAMENTAL_ANALYST, AgentType.SENTIMENT_ANALYST, AgentType.NEWS_ANALYST, AgentType.CAPITAL_FLOW_ANALYST],
   },
   {
     type: AgentType.RISK_MANAGER,

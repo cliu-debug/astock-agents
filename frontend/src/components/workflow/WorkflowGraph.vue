@@ -85,7 +85,7 @@ const stageNameMap: Record<WorkflowStage, string> = {
 /** 阶段包含的智能体类型 */
 const stageAgentMap: Record<WorkflowStage, string[]> = {
   [WorkflowStage.DATA_FETCH]: ['data_fetcher'],
-  [WorkflowStage.PARALLEL_ANALYSIS]: ['technical', 'fundamental', 'sentiment', 'news'],
+  [WorkflowStage.PARALLEL_ANALYSIS]: ['technical', 'fundamental', 'sentiment', 'news', 'capital_flow'],
   [WorkflowStage.DEBATE]: ['bull', 'bear'],
   [WorkflowStage.RISK_ASSESSMENT]: ['risk'],
   [WorkflowStage.DECISION]: ['trader'],

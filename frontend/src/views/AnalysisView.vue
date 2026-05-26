@@ -3,7 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useAgentStore } from '@/stores/agentStore'
 import { AgentStatus, WorkflowStage, LogLevel, Signal, RiskLevel } from '@/types/agent'
 import type { Agent, AgentOutput } from '@/types/agent'
-import { analyzeStock, getPopularStocks, type AnalyzeResponse, type PopularStock } from '@/services/api'
+import { analyzeStock, getPopularStocks, getAnalysisHistory, type AnalyzeResponse, type PopularStock } from '@/services/api'
 import { getSectorRotation, type SectorRotationResult } from '@/services/api'
 
 import AgentScene from '@/components/visualization/AgentScene.vue'
@@ -22,6 +22,8 @@ const analysisError = ref<string | null>(null)
 const popularStocks = ref<PopularStock[]>([])
 const sectorRotation = ref<SectorRotationResult | null>(null)
 const sectorLoading = ref(false)
+const analysisHistory = ref<Array<Record<string, unknown>>>([])
+const historyLoading = ref(false)
 
 const isAnalyzing = computed(() => store.isRunning)
 const overallProgress = computed(() => store.overallProgress)
@@ -111,6 +113,9 @@ async function startAnalysis(): Promise<void> {
     setFinalResultFromResponse(response)
 
     addSystemLog(`${response.stock_name} 分析完成，信号: ${response.final_signal || '未知'}`)
+
+    // 自动加载该股票的分析历史
+    loadAnalysisHistory(response.stock_code)
   } catch (err) {
     progressController.stop()
     const errorMessage = err instanceof Error ? err.message : '未知错误'
@@ -135,7 +140,7 @@ function startProgressSimulation(): { stop: () => void } {
 
   const phases = [
     { stage: WorkflowStage.DATA_FETCH, agents: ['data_fetcher'], duration: 1500 },
-    { stage: WorkflowStage.PARALLEL_ANALYSIS, agents: ['technical', 'fundamental', 'sentiment', 'news'], duration: 3000 },
+    { stage: WorkflowStage.PARALLEL_ANALYSIS, agents: ['technical', 'fundamental', 'sentiment', 'news', 'capital_flow'], duration: 3000 },
     { stage: WorkflowStage.DEBATE, agents: ['bull', 'bear'], duration: 2000 },
     { stage: WorkflowStage.RISK_ASSESSMENT, agents: ['risk'], duration: 1500 },
     { stage: WorkflowStage.DECISION, agents: ['trader'], duration: 1000 },
@@ -196,6 +201,7 @@ function updateAgentOutputs(response: AnalyzeResponse): void {
     fundamental: response.fundamental_analysis,
     sentiment: response.sentiment_analysis,
     news: response.news_analysis,
+    capital_flow: null, // 资金流向通过独立API获取
     bull: response.debate,
     bear: response.debate,
     risk: response.risk_assessment,
@@ -287,6 +293,41 @@ async function loadSectorRotation(): Promise<void> {
   } finally {
     sectorLoading.value = false
   }
+}
+
+/** 加载分析历史记录 */
+async function loadAnalysisHistory(stockCode: string): Promise<void> {
+  historyLoading.value = true
+  try {
+    const res = await getAnalysisHistory(stockCode, 10)
+    if (res.success && res.data) {
+      analysisHistory.value = Array.isArray(res.data) ? res.data : []
+    }
+  } catch {
+    analysisHistory.value = []
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+/** 格式化日期 */
+function formatDate(dateStr: string | unknown): string {
+  if (!dateStr) return '-'
+  try {
+    const d = new Date(String(dateStr))
+    return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return String(dateStr)
+  }
+}
+
+/** 信号颜色 */
+function signalColor(signal: string | unknown): string {
+  const s = String(signal || '').toLowerCase()
+  if (s.includes('buy') || s.includes('买入')) return 'var(--color-positive)'
+  if (s.includes('sell') || s.includes('卖出')) return 'var(--color-negative)'
+  if (s.includes('hold') || s.includes('持有')) return 'var(--color-text-secondary)'
+  return 'var(--color-text-muted)'
 }
 </script>
 
@@ -426,6 +467,41 @@ async function loadSectorRotation(): Promise<void> {
 
           <div v-else-if="!sectorLoading" class="decision-empty">
             点击"获取行业建议"查看当前经济周期下的行业配置建议
+          </div>
+        </div>
+
+        <!-- 分析历史记录面板 -->
+        <div v-if="store.finalResult" class="history-panel">
+          <div class="history-header">
+            <h3 class="history-title">分析历史</h3>
+            <span v-if="historyLoading" class="history-loading">加载中...</span>
+          </div>
+
+          <div v-if="analysisHistory.length > 0" class="history-list">
+            <div
+              v-for="(record, idx) in analysisHistory"
+              :key="idx"
+              class="history-item"
+            >
+              <div class="history-left">
+                <span class="history-time">{{ formatDate(record.created_at || record.timestamp) }}</span>
+                <span class="history-signal" :style="{ color: signalColor(record.signal) }">
+                  {{ record.signal || '-' }}
+                </span>
+              </div>
+              <div class="history-right">
+                <span class="history-confidence">
+                  置信度: {{ record.confidence != null ? record.confidence + '%' : '-' }}
+                </span>
+                <span class="history-price">
+                  价格: {{ record.current_price ? '¥' + record.current_price : '-' }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div v-else-if="!historyLoading" class="history-empty">
+            暂无历史分析记录
           </div>
         </div>
       </div>
@@ -707,6 +783,83 @@ async function loadSectorRotation(): Promise<void> {
 
 .empty-recommendation,
 .decision-empty {
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  padding: 16px 0;
+}
+
+/* 分析历史面板 */
+.history-panel {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.history-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.history-loading {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.history-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.history-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.history-time {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.history-signal {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.history-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.history-confidence,
+.history-price {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.history-empty {
   text-align: center;
   color: var(--color-text-muted);
   font-size: 13px;
