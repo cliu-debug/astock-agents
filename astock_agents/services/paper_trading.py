@@ -91,7 +91,12 @@ class PaperTradingService:
 
         # 市价单立即成交
         if order_type == OrderType.MARKET:
-            self._fill_order(order, price or self._get_market_price(stock_code))
+            try:
+                fill_price = price or self._get_market_price(stock_code)
+                self._fill_order(order, fill_price)
+            except ValueError as e:
+                order.status = TradeStatus.CANCELLED
+                logger.warning(f"[模拟交易] 市价单成交失败: {e}")
 
         self.orders.append(order)
         self._save_order_to_db(order)
@@ -236,18 +241,21 @@ class PaperTradingService:
         return None
 
     def _get_market_price(self, stock_code: str) -> float:
-        """获取市价（简化版，从持仓或默认值获取）
+        """获取市价（从持仓中获取当前价格）
 
         Args:
             stock_code: 股票代码
 
         Returns:
             当前市场价格
+
+        Raises:
+            ValueError: 无法获取价格时抛出
         """
         position = self._find_position(stock_code)
         if position and position.current_price:
             return position.current_price
-        return 50.0  # 默认价格
+        raise ValueError(f"无法获取 {stock_code} 的市价，请提供限价单价格")
 
     def update_prices(self, price_map: Dict[str, float]):
         """更新持仓股票的当前价格

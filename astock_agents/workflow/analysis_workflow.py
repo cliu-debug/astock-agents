@@ -32,13 +32,13 @@ class WorkflowState(TypedDict):
     news: Optional[NewsAnalysis]
 
     # 辩论结果
-    debate: Optional[DebateResult]
+    debate_result: Optional[DebateResult]
 
     # 交易提案
     trade_proposal: Optional[TradeProposal]
 
     # 风险评估
-    risk_assessment: Optional[RiskAssessment]
+    risk_assessment_result: Optional[RiskAssessment]
 
     # 最终报告
     report: Optional[AnalysisReport]
@@ -228,7 +228,7 @@ class AnalysisWorkflow:
                 key_disagreements=self._find_disagreements(bull_result, bear_result)
             )
 
-            state["debate"] = debate
+            state["debate_result"] = debate
             logger.info(f"[工作流] 辩论完成: 获胜方 {debate.winning_side}")
 
         except Exception as e:
@@ -242,7 +242,7 @@ class AnalysisWorkflow:
         """生成交易提案节点"""
         logger.info("[工作流] 生成交易提案")
 
-        if not state.get("debate"):
+        if not state.get("debate_result"):
             logger.warning("[工作流] 缺少辩论结果，尝试基于已有数据生成提案")
 
         try:
@@ -252,7 +252,7 @@ class AnalysisWorkflow:
                 fundamental=state.get("fundamental"),
                 sentiment=state.get("sentiment"),
                 news=state.get("news"),
-                debate=state.get("debate")
+                debate=state.get("debate_result")
             )
 
             state["trade_proposal"] = proposal
@@ -280,7 +280,7 @@ class AnalysisWorkflow:
                 trade_proposal=state["trade_proposal"]
             )
 
-            state["risk_assessment"] = assessment
+            state["risk_assessment_result"] = assessment
             risk_level = assessment.risk_level.value if hasattr(assessment, "risk_level") else "N/A"
             approved = assessment.approved if hasattr(assessment, "approved") else False
             logger.info(f"[工作流] 风险评估完成: {risk_level}, 批准: {approved}")
@@ -308,9 +308,9 @@ class AnalysisWorkflow:
                 fundamental=state.get("fundamental"),
                 sentiment=state.get("sentiment"),
                 news=state.get("news"),
-                debate=state.get("debate"),
+                debate=state.get("debate_result"),
                 trade_proposal=state.get("trade_proposal"),
-                risk_assessment=state.get("risk_assessment"),
+                risk_assessment=state.get("risk_assessment_result"),
                 final_signal=(
                     state["trade_proposal"].direction
                     if state.get("trade_proposal") else None
@@ -354,9 +354,9 @@ class AnalysisWorkflow:
             "fundamental": None,
             "sentiment": None,
             "news": None,
-            "debate": None,
+            "debate_result": None,
             "trade_proposal": None,
-            "risk_assessment": None,
+            "risk_assessment_result": None,
             "report": None,
             "errors": []
         }
@@ -463,8 +463,8 @@ class AnalysisWorkflow:
             lines.append("")
 
         # 辩论结果
-        if state.get("debate"):
-            debate = state["debate"]
+        if state.get("debate_result"):
+            debate = state["debate_result"]
             winner = {"bull": "多头", "bear": "空头", "neutral": "平局"}.get(
                 debate.winning_side, "平局"
             )
@@ -480,8 +480,8 @@ class AnalysisWorkflow:
             lines.append("")
 
         # 风险评估
-        if state.get("risk_assessment"):
-            risk = state["risk_assessment"]
+        if state.get("risk_assessment_result"):
+            risk = state["risk_assessment_result"]
             risk_level = risk.risk_level.value if hasattr(risk, "risk_level") else "N/A"
             risk_score = risk.risk_score if hasattr(risk, "risk_score") else "N/A"
             approved = risk.approved if hasattr(risk, "approved") else False

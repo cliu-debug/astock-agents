@@ -151,7 +151,7 @@ class DataManager:
                         if i < len(values):
                             try:
                                 price_data[key] = float(values[i]) if "." in values[i] else int(values[i])
-                            except:
+                            except (ValueError, TypeError):
                                 price_data[key] = values[i]
                     
                     # 解析时间
@@ -159,7 +159,7 @@ class DataManager:
                     if len(time_str) >= 8:
                         try:
                             date = datetime.strptime(time_str[:8], "%Y%m%d")
-                        except:
+                        except (ValueError, TypeError):
                             date = datetime.now()
                     else:
                         date = datetime.now()

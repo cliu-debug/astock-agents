@@ -65,6 +65,7 @@ app.middleware("http")(auth_middleware)
 
 # 延迟初始化工作流（避免导入时连接数据源）
 _workflow = None
+_db = None
 
 # 当前文件所在目录（兼容 python -m 启动方式）
 _CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -80,9 +81,12 @@ def _load_config() -> Dict[str, Any]:
 
 
 def _get_db():
-    """懒加载数据库实例"""
-    from astock_agents.db.database import Database
-    return Database()
+    """懒加载数据库实例（单例模式）"""
+    global _db
+    if _db is None:
+        from astock_agents.db.database import Database
+        _db = Database()
+    return _db
 
 
 def _get_workflow():
@@ -757,7 +761,6 @@ async def run_backtest(request: Request, body: BacktestRequest):
         )
 
         # 将 dataclass 转为可序列化的字典
-        from dataclasses import asdict
         return asdict(result)
 
     except Exception as e:
@@ -852,7 +855,6 @@ async def sector_rotation(request: Request):
         result = await loop.run_in_executor(None, analyzer.analyze)
 
         # 将dataclass转为可序列化的字典
-        from dataclasses import asdict
         return {"success": True, "data": asdict(result)}
 
     except Exception as e:
@@ -872,7 +874,6 @@ async def sector_heatmap(request: Request):
         loop = asyncio.get_event_loop()
         heatmap_items = await loop.run_in_executor(None, analyzer.get_sector_heatmap)
 
-        from dataclasses import asdict
         return {"success": True, "data": [asdict(item) for item in heatmap_items]}
 
     except Exception as e:
@@ -1387,7 +1388,6 @@ async def market_sentiment(request: Request):
             lambda: analyzer.analyze()
         )
 
-        from dataclasses import asdict
         return {"success": True, "data": asdict(result)}
 
     except Exception as e:
@@ -1433,7 +1433,6 @@ async def calculate_position(request: Request, body: PositionSizingRequest):
             current_price=body.current_price,
         )
 
-        from dataclasses import asdict
         return {"success": True, "data": asdict(result)}
 
     except Exception as e:
@@ -1457,7 +1456,6 @@ async def calculate_portfolio_allocation(request: Request, body: PortfolioSizing
             current_positions=body.current_positions,
         )
 
-        from dataclasses import asdict
         return {"success": True, "data": [asdict(r) for r in results]}
 
     except Exception as e:

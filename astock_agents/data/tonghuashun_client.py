@@ -142,7 +142,7 @@ class TonghuashunClient(BaseDataClient):
             try:
                 with open(cache_file, 'r') as f:
                     cached_data = json.load(f)
-            except:
+            except (json.JSONDecodeError, OSError):
                 pass
         
         if not self.enabled:

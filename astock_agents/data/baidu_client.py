@@ -162,7 +162,7 @@ class BaiduClient(BaseDataClient):
                     try:
                         # 尝试转换为数字
                         item[key] = float(values[i]) if "." in values[i] else int(values[i])
-                    except:
+                    except (ValueError, TypeError):
                         item[key] = values[i]
             
             klines.append(item)

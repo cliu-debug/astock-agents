@@ -257,6 +257,9 @@ class Database:
         finally:
             conn.close()
 
+    # update_watchlist 允许更新的列名白名单
+    WATCHLIST_UPDATABLE_COLUMNS = {"stock_code", "stock_name", "group_name", "notes", "last_signal"}
+
     def update_watchlist(self, stock_code: str, updates: Dict[str, Any]) -> bool:
         """更新自选股字段
 
@@ -269,10 +272,20 @@ class Database:
         """
         if not updates:
             return False
+
+        # 白名单校验：只允许已知列名，防止SQL注入
+        filtered_updates = {
+            k: v for k, v in updates.items()
+            if k in self.WATCHLIST_UPDATABLE_COLUMNS
+        }
+        if not filtered_updates:
+            logger.warning(f"[DB] update_watchlist: 无合法列名，已拒绝更新 {list(updates.keys())}")
+            return False
+
         conn = self._get_conn()
         try:
-            set_clause = ", ".join(f"{k}=?" for k in updates.keys())
-            values = list(updates.values()) + [stock_code]
+            set_clause = ", ".join(f"{k}=?" for k in filtered_updates.keys())
+            values = list(filtered_updates.values()) + [stock_code]
             cursor = conn.execute(
                 f"UPDATE watchlist SET {set_clause} WHERE stock_code=?",
                 values,
