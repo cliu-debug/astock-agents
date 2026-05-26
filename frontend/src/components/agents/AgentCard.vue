@@ -77,6 +77,7 @@ const agentColor = computed((): string => {
     [AgentType.FUNDAMENTAL_ANALYST]: '#8B5CF6',
     [AgentType.SENTIMENT_ANALYST]: '#EC4899',
     [AgentType.NEWS_ANALYST]: '#F97316',
+    [AgentType.CAPITAL_FLOW_ANALYST]: '#14B8A6',
     [AgentType.BULL_RESEARCHER]: '#22C55E',
     [AgentType.BEAR_RESEARCHER]: '#EF4444',
     [AgentType.RISK_MANAGER]: '#EAB308',

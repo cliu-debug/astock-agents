@@ -11,6 +11,7 @@ import WorkflowGraph from '@/components/workflow/WorkflowGraph.vue'
 import AgentCard from '@/components/agents/AgentCard.vue'
 import LogConsole from '@/components/dashboard/LogConsole.vue'
 import ResultCard from '@/components/dashboard/ResultCard.vue'
+import KLineChart from '@/components/chart/KLineChart.vue'
 
 const store = useAgentStore()
 
@@ -24,6 +25,7 @@ const sectorRotation = ref<SectorRotationResult | null>(null)
 const sectorLoading = ref(false)
 const analysisHistory = ref<Array<Record<string, unknown>>>([])
 const historyLoading = ref(false)
+const klineData = ref<Array<{date: string, open: number, high: number, low: number, close: number, volume: number}>>([])
 
 const isAnalyzing = computed(() => store.isRunning)
 const overallProgress = computed(() => store.overallProgress)
@@ -113,6 +115,11 @@ async function startAnalysis(): Promise<void> {
     setFinalResultFromResponse(response)
 
     addSystemLog(`${response.stock_name} 分析完成，信号: ${response.final_signal || '未知'}`)
+
+    // 设置K线数据
+    if (response.price_data && response.price_data.length > 0) {
+      klineData.value = response.price_data
+    }
 
     // 自动加载该股票的分析历史
     loadAnalysisHistory(response.stock_code)
@@ -389,6 +396,11 @@ function signalColor(signal: string | unknown): string {
       </div>
     </div>
 
+    <!-- K线图 -->
+    <section v-if="klineData.length > 0" class="kline-section">
+      <KLineChart :data="klineData" :stock-code="stockCode" :stock-name="stockName" />
+    </section>
+
     <!-- 3D 场景 -->
     <section class="scene-section" v-if="show3D">
       <AgentScene :agents="store.agents" />
@@ -610,6 +622,8 @@ function signalColor(signal: string | unknown): string {
   border-radius: 1px;
   transition: width 0.5s ease;
 }
+
+.kline-section { margin-bottom: 12px; }
 
 .scene-section { position: relative; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--color-border); }
 .scene-collapsed { display: flex; justify-content: center; padding: 6px; }

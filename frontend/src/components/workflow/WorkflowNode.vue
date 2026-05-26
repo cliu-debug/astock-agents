@@ -71,6 +71,7 @@ const agentIconMap: Record<AgentType, string> = {
   [AgentType.FUNDAMENTAL_ANALYST]: '📈',
   [AgentType.SENTIMENT_ANALYST]: '💭',
   [AgentType.NEWS_ANALYST]: '📰',
+  [AgentType.CAPITAL_FLOW_ANALYST]: '💵',
   [AgentType.BULL_RESEARCHER]: '🐂',
   [AgentType.BEAR_RESEARCHER]: '🐻',
   [AgentType.RISK_MANAGER]: '🛡️',
