@@ -17,6 +17,7 @@ from slowapi.errors import RateLimitExceeded
 import os
 import yaml
 import asyncio
+from dataclasses import asdict
 from loguru import logger
 
 from astock_agents.web.auth import auth_middleware, generate_jwt_token, is_auth_enabled
@@ -328,7 +329,25 @@ async def analyze_stock(request: Request, body: AnalysisRequest):
         except Exception as e:
             logger.warning(f"[Web] 分析结果持久化失败: {e}")
 
-        return response
+        # 自动生成决策 - 分析完成后自动调用决策引擎
+        decision_id = None
+        try:
+            engine = _get_decision_engine()
+            decision = engine.generate_decision(
+                analysis_report=report.model_dump(),
+                portfolio_state=None,  # TODO: 从交易服务获取
+            )
+            decision_id = decision.id
+            logger.info(f"[Web] 自动决策已生成: {decision_id}")
+        except Exception as e:
+            logger.warning(f"[Web] 自动决策生成失败: {e}")
+
+        # 将决策ID附加到响应
+        response_dict = response.model_dump()
+        if decision_id:
+            response_dict["decision_id"] = decision_id
+
+        return response_dict
 
     except Exception as e:
         logger.error(f"[Web] 分析失败: {body.stock_code}, {e}")
@@ -462,6 +481,30 @@ def _get_portfolio_risk_analyzer():
         from astock_agents.services.portfolio_risk import PortfolioRiskAnalyzer
         _portfolio_risk_analyzer = PortfolioRiskAnalyzer()
     return _portfolio_risk_analyzer
+
+
+_decision_engine = None
+
+
+def _get_decision_engine():
+    """懒加载自动决策引擎"""
+    global _decision_engine
+    if _decision_engine is None:
+        from astock_agents.services.decision_engine import DecisionEngine
+        _decision_engine = DecisionEngine()
+    return _decision_engine
+
+
+_sector_rotation_analyzer = None
+
+
+def _get_sector_rotation_analyzer():
+    """懒加载行业轮动分析器"""
+    global _sector_rotation_analyzer
+    if _sector_rotation_analyzer is None:
+        from astock_agents.services.sector_rotation import SectorRotationAnalyzer
+        _sector_rotation_analyzer = SectorRotationAnalyzer()
+    return _sector_rotation_analyzer
 
 
 # ---------- 选股器 ----------
@@ -794,6 +837,49 @@ async def portfolio_risk_analysis(request: Request):
         raise HTTPException(status_code=500, detail=f"组合风险分析失败: {str(e)}")
 
 
+# ---------- 行业轮动分析 ----------
+
+@app.get("/api/sector/rotation")
+@limiter.limit("10/minute")
+async def sector_rotation(request: Request):
+    """行业轮动分析 - 经济周期定位、行业推荐、轮动信号
+
+    限流: 每分钟10次请求
+    """
+    try:
+        analyzer = _get_sector_rotation_analyzer()
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, analyzer.analyze)
+
+        # 将dataclass转为可序列化的字典
+        from dataclasses import asdict
+        return {"success": True, "data": asdict(result)}
+
+    except Exception as e:
+        logger.error(f"[Web] 行业轮动分析失败: {e}")
+        raise HTTPException(status_code=500, detail=f"行业轮动分析失败: {str(e)}")
+
+
+@app.get("/api/sector/heatmap")
+@limiter.limit("10/minute")
+async def sector_heatmap(request: Request):
+    """行业热力图数据 - 28个申万一级行业涨跌幅、量比、资金流向、热度评分
+
+    限流: 每分钟10次请求
+    """
+    try:
+        analyzer = _get_sector_rotation_analyzer()
+        loop = asyncio.get_event_loop()
+        heatmap_items = await loop.run_in_executor(None, analyzer.get_sector_heatmap)
+
+        from dataclasses import asdict
+        return {"success": True, "data": [asdict(item) for item in heatmap_items]}
+
+    except Exception as e:
+        logger.error(f"[Web] 行业热力图获取失败: {e}")
+        raise HTTPException(status_code=500, detail=f"行业热力图获取失败: {str(e)}")
+
+
 # ==================== 调度器API ====================
 
 _scheduler_service = None
@@ -1099,6 +1185,284 @@ async def search_analyses(request: Request, q: str = "", limit: int = 50):
     service = _get_history_service()
     results = service.search_analyses(q, limit=limit)
     return {"success": True, "data": results}
+
+
+# ==================== 自动决策引擎API ====================
+
+@app.get("/api/decisions/pending")
+@limiter.limit("30/minute")
+async def get_pending_decisions(request: Request):
+    """获取待执行决策"""
+    try:
+        engine = _get_decision_engine()
+        decisions = engine.get_pending_decisions()
+        return {
+            "success": True,
+            "decisions": [asdict(d) for d in decisions],
+            "total": len(decisions),
+        }
+    except Exception as e:
+        logger.error(f"[Web] 获取待执行决策失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取待执行决策失败: {str(e)}")
+
+
+@app.get("/api/decisions/history")
+@limiter.limit("30/minute")
+async def get_decision_history(request: Request, stock_code: str = "", limit: int = 50):
+    """获取决策历史"""
+    try:
+        engine = _get_decision_engine()
+        decisions = engine.get_decision_history(stock_code=stock_code, limit=limit)
+        return {
+            "success": True,
+            "decisions": [asdict(d) for d in decisions],
+            "total": len(decisions),
+        }
+    except Exception as e:
+        logger.error(f"[Web] 获取决策历史失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取决策历史失败: {str(e)}")
+
+
+@app.post("/api/decisions/{decision_id}/execute")
+@limiter.limit("10/minute")
+async def execute_decision(request: Request, decision_id: str):
+    """执行决策"""
+    try:
+        engine = _get_decision_engine()
+        result = engine.execute_decision(decision_id)
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("message", "执行失败"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Web] 执行决策失败: {decision_id}, {e}")
+        raise HTTPException(status_code=500, detail=f"执行决策失败: {str(e)}")
+
+
+@app.post("/api/decisions/{decision_id}/cancel")
+@limiter.limit("10/minute")
+async def cancel_decision(request: Request, decision_id: str):
+    """取消决策"""
+    try:
+        body = await request.json() if request.headers.get("content-type") else {}
+    except Exception:
+        body = {}
+
+    reason = body.get("reason", "") if isinstance(body, dict) else ""
+
+    try:
+        engine = _get_decision_engine()
+        success = engine.cancel_decision(decision_id, reason=reason)
+        if not success:
+            raise HTTPException(status_code=400, detail="取消失败，决策不存在或状态不允许")
+        return {"success": True, "message": "决策已取消"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Web] 取消决策失败: {decision_id}, {e}")
+        raise HTTPException(status_code=500, detail=f"取消决策失败: {str(e)}")
+
+
+@app.post("/api/decisions/{decision_id}/review")
+@limiter.limit("10/minute")
+async def review_decision(request: Request, decision_id: str):
+    """决策复盘"""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="请求体解析失败")
+
+    outcome = body.get("outcome", "")
+    actual_pnl = body.get("actual_pnl", 0.0)
+
+    if not outcome:
+        raise HTTPException(status_code=400, detail="复盘结果(outcome)不能为空")
+
+    try:
+        engine = _get_decision_engine()
+        result = engine.review_decision(decision_id, outcome=outcome, actual_pnl=float(actual_pnl))
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("message", "复盘失败"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Web] 决策复盘失败: {decision_id}, {e}")
+        raise HTTPException(status_code=500, detail=f"决策复盘失败: {str(e)}")
+
+
+# ==================== 核心竞争力API ====================
+
+_capital_flow_analyst = None
+_market_sentiment_analyzer = None
+_position_sizing_service = None
+
+
+def _get_capital_flow_analyst():
+    """懒加载资金流向分析师"""
+    global _capital_flow_analyst
+    if _capital_flow_analyst is None:
+        from astock_agents.agents.capital_flow_analyst import CapitalFlowAnalyst
+        _capital_flow_analyst = CapitalFlowAnalyst()
+    return _capital_flow_analyst
+
+
+def _get_market_sentiment_analyzer():
+    """懒加载市场情绪分析器"""
+    global _market_sentiment_analyzer
+    if _market_sentiment_analyzer is None:
+        from astock_agents.services.market_sentiment import MarketSentimentAnalyzer
+        _market_sentiment_analyzer = MarketSentimentAnalyzer()
+    return _market_sentiment_analyzer
+
+
+def _get_position_sizing_service():
+    """懒加载仓位管理服务"""
+    global _position_sizing_service
+    if _position_sizing_service is None:
+        from astock_agents.services.position_sizing import PositionSizingService
+        _position_sizing_service = PositionSizingService()
+    return _position_sizing_service
+
+
+class CapitalFlowRequest(BaseModel):
+    """资金流向分析请求"""
+    stock_code: str = Field(..., description="股票代码，如 600519.SH")
+    stock_name: Optional[str] = Field(None, description="股票名称")
+
+
+@app.post("/api/capital-flow/analyze")
+@limiter.limit("10/minute")
+async def capital_flow_analyze(request: Request, body: CapitalFlowRequest):
+    """
+    资金流向分析 - 主力资金、北向资金、融资融券、资金共振、量价背离
+
+    限流: 每分钟10次请求
+    """
+    try:
+        validated_code = validate_stock_code(body.stock_code)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        # 获取股票数据
+        dm = _get_data_manager()
+        stock_data = dm.get_stock_data(validated_code)
+        if not stock_data:
+            # 无数据时创建基础StockData
+            from astock_agents.models import StockData as SD
+            stock_data = SD(
+                stock_code=validated_code,
+                stock_name=body.stock_name or validated_code,
+            )
+
+        analyst = _get_capital_flow_analyst()
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: analyst.analyze(stock_data)
+        )
+
+        return {"success": True, "data": result}
+
+    except Exception as e:
+        logger.error(f"[Web] 资金流向分析失败: {body.stock_code}, {e}")
+        raise HTTPException(status_code=500, detail=f"资金流向分析失败: {str(e)}")
+
+
+@app.get("/api/market/sentiment")
+@limiter.limit("10/minute")
+async def market_sentiment(request: Request):
+    """
+    市场情绪温度计 - 恐贪指数、市场宽度、成交量情绪、波动率水平
+
+    限流: 每分钟10次请求
+    """
+    try:
+        analyzer = _get_market_sentiment_analyzer()
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: analyzer.analyze()
+        )
+
+        from dataclasses import asdict
+        return {"success": True, "data": asdict(result)}
+
+    except Exception as e:
+        logger.error(f"[Web] 市场情绪分析失败: {e}")
+        raise HTTPException(status_code=500, detail=f"市场情绪分析失败: {str(e)}")
+
+
+class PositionSizingRequest(BaseModel):
+    """仓位计算请求"""
+    stock_code: str = Field(..., description="股票代码")
+    signal: str = Field(..., description="交易信号: strong_buy/buy/hold/sell/strong_sell")
+    confidence: float = Field(50, ge=0, le=100, description="信号置信度 0-100")
+    risk_level: str = Field("moderate", description="风险等级: low/moderate/high/extreme")
+    portfolio_value: float = Field(100000, gt=0, description="组合总价值")
+    stop_loss_pct: float = Field(0.07, gt=0, lt=1, description="止损比例")
+    current_price: Optional[float] = Field(None, gt=0, description="当前股价")
+
+
+class PortfolioSizingRequest(BaseModel):
+    """组合仓位计算请求"""
+    signals: List[Dict[str, Any]] = Field(..., description="信号列表")
+    portfolio_value: float = Field(100000, gt=0, description="组合总价值")
+    current_positions: Optional[List[Dict[str, Any]]] = Field(None, description="当前持仓")
+
+
+@app.post("/api/position-sizing")
+@limiter.limit("10/minute")
+async def calculate_position(request: Request, body: PositionSizingRequest):
+    """
+    计算仓位建议 - 凯利公式、半凯利策略、风险约束
+
+    限流: 每分钟10次请求
+    """
+    try:
+        service = _get_position_sizing_service()
+        result = service.calculate_position(
+            signal=body.signal,
+            confidence=body.confidence,
+            risk_level=body.risk_level,
+            portfolio_value=body.portfolio_value,
+            stop_loss_pct=body.stop_loss_pct,
+            stock_code=body.stock_code,
+            current_price=body.current_price,
+        )
+
+        from dataclasses import asdict
+        return {"success": True, "data": asdict(result)}
+
+    except Exception as e:
+        logger.error(f"[Web] 仓位计算失败: {e}")
+        raise HTTPException(status_code=500, detail=f"仓位计算失败: {str(e)}")
+
+
+@app.post("/api/position-sizing/portfolio")
+@limiter.limit("5/minute")
+async def calculate_portfolio_allocation(request: Request, body: PortfolioSizingRequest):
+    """
+    计算组合级仓位配置 - 风险平价、相关性调整
+
+    限流: 每分钟5次请求
+    """
+    try:
+        service = _get_position_sizing_service()
+        results = service.calculate_portfolio_allocation(
+            signals=body.signals,
+            portfolio_value=body.portfolio_value,
+            current_positions=body.current_positions,
+        )
+
+        from dataclasses import asdict
+        return {"success": True, "data": [asdict(r) for r in results]}
+
+    except Exception as e:
+        logger.error(f"[Web] 组合仓位计算失败: {e}")
+        raise HTTPException(status_code=500, detail=f"组合仓位计算失败: {str(e)}")
 
 
 # ==================== Vue前端静态文件服务（生产模式） ====================
