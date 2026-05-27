@@ -70,8 +70,10 @@ class BullResearcher(BaseAgent):
         # LLM增强分析：从看多角度论证买入理由
         if self.llm:
             try:
+                opponent_context = kwargs.get("opponent_context")
                 llm_thesis = self._llm_generate_bull_thesis(
-                    stock_data, technical, fundamental, sentiment, news, arguments
+                    stock_data, technical, fundamental, sentiment, news, arguments,
+                    opponent_context=opponent_context
                 )
                 if llm_thesis.get("bull_thesis"):
                     result["bull_thesis"] = llm_thesis["bull_thesis"]
@@ -222,7 +224,8 @@ class BullResearcher(BaseAgent):
         fundamental: FundamentalAnalysis,
         sentiment: SentimentAnalysis,
         news: NewsAnalysis,
-        arguments: List[str]
+        arguments: List[str],
+        opponent_context: str = None
     ) -> Dict[str, str]:
         """
         使用LLM从看多角度论证买入理由
@@ -236,6 +239,7 @@ class BullResearcher(BaseAgent):
             sentiment: 情绪分析结果
             news: 新闻分析结果
             arguments: 规则引擎已提取的看多论据
+            opponent_context: 对手（空头）上一轮的论点摘要
 
         Returns:
             LLM结构化输出字典
@@ -264,10 +268,18 @@ class BullResearcher(BaseAgent):
         if arguments:
             data_parts.append(f"已有看多论据={'；'.join(arguments[:5])}")
 
+        # 添加对手论点上下文（多轮辩论时使用）
+        if opponent_context:
+            data_parts.append(f"空头上一轮论点={opponent_context}")
+
         data_summary = ", ".join(data_parts)
 
         instruction = (
             f"基于以上各分析师的具体数据，从看多角度为{stock_data.stock_name}构建买入论证。"
+        )
+        if opponent_context:
+            instruction += "请回应空头的论点，指出其不足或遗漏之处。"
+        instruction += (
             "请引用具体数据（如'技术指标RSI=30超卖'、'PE=12估值偏低'等），"
             "给出有说服力的看多逻辑。所有论据必须基于提供的数据，不得编造。"
         )

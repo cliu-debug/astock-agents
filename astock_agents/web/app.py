@@ -15,6 +15,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 import os
+import json
 import yaml
 import asyncio
 from dataclasses import asdict
@@ -1484,6 +1485,283 @@ async def calculate_portfolio_allocation(request: Request, body: PortfolioSizing
 # ==================== Vue前端静态文件服务（生产模式） ====================
 
 _FRONTEND_DIST = os.path.join(_CURRENT_DIR, "..", "..", "frontend", "dist")
+
+# ==================== LLM配置API ====================
+
+_user_memory_service = None
+_mcp_server = None
+
+
+def _get_user_memory_service():
+    """懒加载用户记忆服务"""
+    global _user_memory_service
+    if _user_memory_service is None:
+        from astock_agents.services.user_memory import UserMemoryService
+        _user_memory_service = UserMemoryService()
+    return _user_memory_service
+
+
+def _get_mcp_server():
+    """懒加载MCP服务"""
+    global _mcp_server
+    if _mcp_server is None:
+        from astock_agents.services.mcp_server import MCPServer
+        _mcp_server = MCPServer()
+    return _mcp_server
+
+
+@app.get("/api/llm/config")
+@limiter.limit("30/minute")
+async def get_llm_config(request: Request):
+    """获取当前LLM配置（隐藏API Key）
+
+    返回脱敏后的LLM提供商配置信息，API Key仅显示前4位和后4位。
+    """
+    from astock_agents.config import get_safe_llm_config
+    config = get_safe_llm_config()
+    return {"success": True, "data": config}
+
+
+class LLMTestRequest(BaseModel):
+    """LLM连接测试请求"""
+    provider: str = Field(..., description="LLM提供商: openai/anthropic/qwen/deepseek/ollama/zhipu")
+    prompt: str = Field("你好，请回复'连接成功'", description="测试提示词")
+
+
+@app.post("/api/llm/test")
+@limiter.limit("5/minute")
+async def test_llm_connection(request: Request, body: LLMTestRequest):
+    """测试LLM连接是否正常
+
+    向指定的LLM提供商发送一条测试消息，验证连接和认证是否正常。
+    限流: 每分钟5次请求
+    """
+    try:
+        from astock_agents.config import get_llm_config
+        from astock_agents.agents.base_agent import BaseAgent
+
+        llm_config = get_llm_config()
+        llm_config["default_provider"] = body.provider
+
+        # 创建临时智能体测试LLM连接
+        class _TestAgent(BaseAgent):
+            def analyze(self, stock_data, **kwargs):
+                return {}
+
+        agent = _TestAgent(
+            name="LLM测试",
+            role="连接测试",
+            config={"llm": llm_config},
+        )
+
+        if not agent.llm:
+            return {
+                "success": False,
+                "provider": body.provider,
+                "error": "LLM初始化失败，请检查API Key配置",
+            }
+
+        # 发送测试消息
+        response = agent._call_llm(body.prompt)
+        return {
+            "success": True,
+            "provider": body.provider,
+            "response_preview": response[:200] if response else "",
+        }
+
+    except Exception as e:
+        logger.error(f"[Web] LLM连接测试失败: {body.provider}, {e}")
+        return {
+            "success": False,
+            "provider": body.provider,
+            "error": str(e),
+        }
+
+
+# ==================== 用户记忆API ====================
+
+@app.get("/api/memory/profile")
+@limiter.limit("30/minute")
+async def get_user_profile(request: Request, user_id: str = "default"):
+    """获取用户投资画像
+
+    基于历史行为数据，返回用户的投资偏好画像，包括偏好行业、风险偏好、持仓周期等。
+    """
+    service = _get_user_memory_service()
+    profile = service.get_user_profile(user_id)
+    return {"success": True, "data": profile}
+
+
+@app.get("/api/memory/stock/{stock_code}")
+@limiter.limit("30/minute")
+async def get_stock_memory(request: Request, stock_code: str, user_id: str = "default"):
+    """获取股票历史记忆
+
+    返回用户对指定股票的历史分析和交易记录。
+    """
+    service = _get_user_memory_service()
+    memory = service.get_stock_memory(user_id, stock_code)
+    return {"success": True, "data": memory}
+
+
+class MemoryRecordRequest(BaseModel):
+    """记忆记录请求"""
+    user_id: str = Field("default", description="用户ID")
+    action_type: str = Field(..., description="行为类型: analysis/trade")
+    stock_code: str = Field(..., description="股票代码")
+    signal: Optional[str] = Field(None, description="信号")
+    confidence: Optional[int] = Field(None, ge=0, le=100, description="置信度")
+    amount: Optional[float] = Field(None, description="交易金额")
+    price: Optional[float] = Field(None, description="交易价格")
+    industry: Optional[str] = Field(None, description="所属行业")
+
+
+@app.post("/api/memory/record")
+@limiter.limit("30/minute")
+async def record_memory(request: Request, body: MemoryRecordRequest):
+    """记录用户行为
+
+    记录用户的分析或交易行为，用于构建投资画像。
+    """
+    service = _get_user_memory_service()
+
+    if body.action_type == "analysis":
+        success = service.record_analysis(
+            user_id=body.user_id,
+            stock_code=body.stock_code,
+            signal=body.signal or "",
+            confidence=body.confidence or 50,
+            industry=body.industry,
+        )
+    elif body.action_type == "trade":
+        success = service.record_trade(
+            user_id=body.user_id,
+            stock_code=body.stock_code,
+            action=body.signal or "buy",
+            amount=body.amount or 0,
+            price=body.price or 0,
+            industry=body.industry,
+        )
+    else:
+        raise HTTPException(status_code=400, detail=f"不支持的行为类型: {body.action_type}")
+
+    return {"success": success}
+
+
+# ==================== MCP协议API ====================
+
+@app.get("/api/mcp/tools")
+@limiter.limit("30/minute")
+async def list_mcp_tools(request: Request):
+    """列出所有可用的MCP工具
+
+    返回所有已注册的金融工具定义，包括名称、描述和输入参数Schema。
+    """
+    server = _get_mcp_server()
+    tools = server.list_tools()
+    return {"success": True, "tools": tools, "total": len(tools)}
+
+
+class MCPCallRequest(BaseModel):
+    """MCP工具调用请求"""
+    tool_name: str = Field(..., description="工具名称")
+    arguments: Dict[str, Any] = Field(default_factory=dict, description="工具参数")
+
+
+@app.post("/api/mcp/call")
+@limiter.limit("10/minute")
+async def call_mcp_tool(request: Request, body: MCPCallRequest):
+    """调用MCP工具
+
+    调用指定的金融工具并返回结果。
+    限流: 每分钟10次请求
+    """
+    server = _get_mcp_server()
+
+    try:
+        result = server.call_tool(body.tool_name, body.arguments)
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error", "工具调用失败"))
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+# ==================== 辩论配置API ====================
+
+class DebateConfigRequest(BaseModel):
+    """辩论配置请求"""
+    debate_rounds: int = Field(2, ge=1, le=5, description="辩论轮数(1-5)")
+    enable_prisoners_dilemma: bool = Field(True, description="是否启用囚徒困境模型")
+
+
+@app.post("/api/debate/config")
+@limiter.limit("10/minute")
+async def configure_debate(request: Request, body: DebateConfigRequest):
+    """配置辩论参数
+
+    设置辩论轮数和是否启用囚徒困境模型。
+    注意：此配置影响后续所有分析请求的辩论过程。
+    """
+    global _workflow
+
+    try:
+        # 更新工作流配置
+        if _workflow is not None:
+            _workflow.debate_rounds = body.debate_rounds
+            _workflow.enable_prisoners_dilemma = body.enable_prisoners_dilemma
+            logger.info(
+                f"[Web] 辩论配置已更新: 轮数={body.debate_rounds}, "
+                f"囚徒困境={'启用' if body.enable_prisoners_dilemma else '禁用'}"
+            )
+        else:
+            # 工作流未初始化，更新配置缓存
+            config = _load_config()
+            config["debate_rounds"] = body.debate_rounds
+            config["enable_prisoners_dilemma"] = body.enable_prisoners_dilemma
+
+        return {
+            "success": True,
+            "config": {
+                "debate_rounds": body.debate_rounds,
+                "enable_prisoners_dilemma": body.enable_prisoners_dilemma,
+            },
+        }
+    except Exception as e:
+        logger.error(f"[Web] 辩论配置更新失败: {e}")
+        raise HTTPException(status_code=500, detail=f"配置更新失败: {str(e)}")
+
+
+@app.get("/api/debate/history/{stock_code}")
+@limiter.limit("30/minute")
+async def get_debate_history(request: Request, stock_code: str, limit: int = 20):
+    """获取辩论历史
+
+    返回指定股票的历史辩论记录，包括辩论轮数、投票结果、合作度评分等。
+    """
+    try:
+        db = _get_db()
+        history = db.get_debate_history(stock_code, limit=limit)
+
+        # 解析JSON字段
+        for record in history:
+            if isinstance(record.get("debate_history_json"), str):
+                try:
+                    record["debate_history"] = json.loads(record["debate_history_json"])
+                except (json.JSONDecodeError, TypeError):
+                    record["debate_history"] = []
+            if isinstance(record.get("votes_json"), str):
+                try:
+                    record["votes"] = json.loads(record["votes_json"])
+                except (json.JSONDecodeError, TypeError):
+                    record["votes"] = {}
+
+        return {"success": True, "data": history, "total": len(history)}
+    except Exception as e:
+        logger.error(f"[Web] 获取辩论历史失败: {stock_code}, {e}")
+        raise HTTPException(status_code=500, detail=f"获取辩论历史失败: {str(e)}")
+
+
 if os.path.isdir(_FRONTEND_DIST) and not os.environ.get("ASTOCK_DEV_MODE"):
     from fastapi.staticfiles import StaticFiles
 

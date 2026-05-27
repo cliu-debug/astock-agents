@@ -1,4 +1,4 @@
-"""投资系统服务层 - 选股、自选股、模拟交易、复盘、回测、组合风险分析、监控、调度、通知、追踪、历史分析、行业轮动、决策引擎、市场情绪、仓位管理"""
+"""投资系统服务层 - 选股、自选股、模拟交易、复盘、回测、组合风险分析、监控、调度、通知、追踪、历史分析、行业轮动、决策引擎、市场情绪、仓位管理、用户记忆、MCP服务"""
 
 from astock_agents.services.screener import StockScreener
 from astock_agents.services.watchlist import WatchlistManager
@@ -15,6 +15,8 @@ from astock_agents.services.sector_rotation import SectorRotationAnalyzer, get_s
 from astock_agents.services.decision_engine import DecisionEngine
 from astock_agents.services.market_sentiment import MarketSentimentAnalyzer
 from astock_agents.services.position_sizing import PositionSizingService
+from astock_agents.services.user_memory import UserMemoryService
+from astock_agents.services.mcp_server import MCPServer
 
 __all__ = [
     "StockScreener",
@@ -38,4 +40,6 @@ __all__ = [
     "DecisionEngine",
     "MarketSentimentAnalyzer",
     "PositionSizingService",
+    "UserMemoryService",
+    "MCPServer",
 ]

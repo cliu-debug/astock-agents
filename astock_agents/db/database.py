@@ -6,6 +6,8 @@
 - trade_orders: 交易订单
 - positions: 持仓
 - trade_records: 交易记录（复盘用）
+- user_memory: 用户记忆（年轮记忆算法）
+- debate_history: 辩论历史记录
 """
 
 import os
@@ -124,6 +126,38 @@ class Database:
                     signal_at_buy TEXT,
                     signal_at_sell TEXT
                 );
+
+                CREATE TABLE IF NOT EXISTS user_memory (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    stock_code TEXT NOT NULL,
+                    action_type TEXT NOT NULL,
+                    signal TEXT,
+                    confidence INTEGER,
+                    amount REAL,
+                    price REAL,
+                    industry TEXT,
+                    metadata TEXT DEFAULT '{}',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_user_memory_user ON user_memory(user_id);
+                CREATE INDEX IF NOT EXISTS idx_user_memory_stock ON user_memory(user_id, stock_code);
+                CREATE INDEX IF NOT EXISTS idx_user_memory_time ON user_memory(created_at);
+
+                CREATE TABLE IF NOT EXISTS debate_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    stock_code TEXT NOT NULL,
+                    debate_rounds INTEGER DEFAULT 1,
+                    debate_history_json TEXT DEFAULT '[]',
+                    votes_json TEXT DEFAULT '{}',
+                    cooperation_score REAL DEFAULT 0.5,
+                    nash_equilibrium TEXT,
+                    winning_side TEXT,
+                    debate_summary TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_debate_history_stock ON debate_history(stock_code);
+                CREATE INDEX IF NOT EXISTS idx_debate_history_time ON debate_history(created_at);
             """)
             conn.commit()
         finally:
@@ -446,6 +480,173 @@ class Database:
                 rows = conn.execute(
                     "SELECT * FROM trade_records ORDER BY buy_time DESC"
                 ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    # ---- 用户记忆 ----
+
+    def save_user_memory(
+        self,
+        user_id: str,
+        stock_code: str,
+        action_type: str,
+        signal: Optional[str] = None,
+        confidence: Optional[int] = None,
+        amount: Optional[float] = None,
+        price: Optional[float] = None,
+        industry: Optional[str] = None,
+        metadata: Optional[str] = "{}",
+    ) -> None:
+        """保存用户记忆记录
+
+        Args:
+            user_id: 用户ID
+            stock_code: 股票代码
+            action_type: 行为类型（analysis/trade）
+            signal: 信号
+            confidence: 置信度
+            amount: 交易金额
+            price: 交易价格
+            industry: 所属行业
+            metadata: 附加信息JSON字符串
+        """
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                """INSERT INTO user_memory
+                (user_id, stock_code, action_type, signal, confidence, amount, price, industry, metadata)
+                VALUES (?,?,?,?,?,?,?,?,?)""",
+                (user_id, stock_code, action_type, signal, confidence, amount, price, industry, metadata),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_user_memories(
+        self,
+        user_id: str,
+        stock_code: Optional[str] = None,
+        action_type: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """获取用户记忆记录
+
+        Args:
+            user_id: 用户ID
+            stock_code: 股票代码（可选，为空时返回全部）
+            action_type: 行为类型筛选（可选）
+            limit: 返回条数上限
+
+        Returns:
+            记忆记录字典列表，按时间倒序
+        """
+        conn = self._get_conn()
+        try:
+            query = "SELECT * FROM user_memory WHERE user_id=?"
+            params: list = [user_id]
+
+            if stock_code:
+                query += " AND stock_code=?"
+                params.append(stock_code)
+            if action_type:
+                query += " AND action_type=?"
+                params.append(action_type)
+
+            query += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit)
+
+            rows = conn.execute(query, params).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_user_industry_stats(self, user_id: str) -> List[Dict[str, Any]]:
+        """获取用户按行业的分析频率统计
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            行业统计列表，包含 industry 和 count 字段
+        """
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                """SELECT industry, COUNT(*) as count
+                FROM user_memory
+                WHERE user_id=? AND industry IS NOT NULL AND industry != ''
+                GROUP BY industry
+                ORDER BY count DESC""",
+                (user_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    # ---- 辩论历史 ----
+
+    def save_debate_history(
+        self,
+        stock_code: str,
+        debate_rounds: int,
+        debate_history_json: str,
+        votes_json: str,
+        cooperation_score: float,
+        nash_equilibrium: Optional[str] = None,
+        winning_side: Optional[str] = None,
+        debate_summary: Optional[str] = None,
+    ) -> int:
+        """保存辩论历史记录
+
+        Args:
+            stock_code: 股票代码
+            debate_rounds: 辩论轮数
+            debate_history_json: 辩论历史JSON字符串
+            votes_json: 投票结果JSON字符串
+            cooperation_score: 合作度评分
+            nash_equilibrium: 纳什均衡分析
+            winning_side: 获胜方
+            debate_summary: 辩论总结
+
+        Returns:
+            插入记录的ID
+        """
+        conn = self._get_conn()
+        try:
+            cursor = conn.execute(
+                """INSERT INTO debate_history
+                (stock_code, debate_rounds, debate_history_json, votes_json,
+                 cooperation_score, nash_equilibrium, winning_side, debate_summary)
+                VALUES (?,?,?,?,?,?,?,?)""",
+                (stock_code, debate_rounds, debate_history_json, votes_json,
+                 cooperation_score, nash_equilibrium, winning_side, debate_summary),
+            )
+            conn.commit()
+            return cursor.lastrowid or 0
+        finally:
+            conn.close()
+
+    def get_debate_history(
+        self,
+        stock_code: str,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """获取辩论历史记录
+
+        Args:
+            stock_code: 股票代码
+            limit: 返回条数上限
+
+        Returns:
+            辩论历史字典列表，按时间倒序
+        """
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM debate_history WHERE stock_code=? ORDER BY created_at DESC LIMIT ?",
+                (stock_code, limit),
+            ).fetchall()
             return [dict(r) for r in rows]
         finally:
             conn.close()

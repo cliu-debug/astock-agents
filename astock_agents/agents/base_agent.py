@@ -37,8 +37,19 @@ class BaseAgent(ABC):
         logger.info(f"智能体初始化: {name} ({role})")
 
     def _create_default_llm(self) -> Optional[Any]:
-        """创建默认LLM（如果配置了API密钥）"""
+        """创建默认LLM（如果配置了API密钥）
+
+        支持的提供商：openai, anthropic, qwen, deepseek, ollama, zhipu
+        当 self.config 中未包含 llm 配置时，自动从环境变量加载
+        """
         llm_config = self.config.get("llm", {})
+
+        # 如果配置中没有 llm 字段，从环境变量加载
+        if not llm_config:
+            from astock_agents.config import get_llm_config
+            llm_config = get_llm_config()
+            self.config["llm"] = llm_config
+
         provider = llm_config.get("default_provider", "openai")
 
         try:
@@ -66,11 +77,59 @@ class BaseAgent(ABC):
                     temperature=llm_config.get("anthropic", {}).get("temperature", 0.3),
                     api_key=api_key,
                 )
+            elif provider == "qwen":
+                api_key = llm_config.get("qwen", {}).get("api_key")
+                if not api_key:
+                    logger.warning(f"[{self.name}] 未配置通义千问API密钥，LLM功能不可用")
+                    return None
+
+                from langchain_openai import ChatOpenAI
+                return ChatOpenAI(
+                    model=llm_config.get("qwen", {}).get("model", "qwen-plus"),
+                    temperature=llm_config.get("qwen", {}).get("temperature", 0.3),
+                    api_key=api_key,
+                    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1/",
+                )
+            elif provider == "deepseek":
+                api_key = llm_config.get("deepseek", {}).get("api_key")
+                if not api_key:
+                    logger.warning(f"[{self.name}] 未配置DeepSeek API密钥，LLM功能不可用")
+                    return None
+
+                from langchain_openai import ChatOpenAI
+                return ChatOpenAI(
+                    model=llm_config.get("deepseek", {}).get("model", "deepseek-chat"),
+                    temperature=llm_config.get("deepseek", {}).get("temperature", 0.3),
+                    api_key=api_key,
+                    base_url="https://api.deepseek.com/v1",
+                )
+            elif provider == "ollama":
+                from langchain_openai import ChatOpenAI
+                return ChatOpenAI(
+                    model=llm_config.get("ollama", {}).get("model", "qwen2.5:7b"),
+                    temperature=llm_config.get("ollama", {}).get("temperature", 0.3),
+                    api_key="ollama",  # Ollama不需要真实key
+                    base_url=llm_config.get("ollama", {}).get("base_url", "http://localhost:11434/v1"),
+                )
+            elif provider == "zhipu":
+                api_key = llm_config.get("zhipu", {}).get("api_key")
+                if not api_key:
+                    logger.warning(f"[{self.name}] 未配置智谱AI API密钥，LLM功能不可用")
+                    return None
+
+                from langchain_openai import ChatOpenAI
+                return ChatOpenAI(
+                    model=llm_config.get("zhipu", {}).get("model", "glm-4"),
+                    temperature=llm_config.get("zhipu", {}).get("temperature", 0.3),
+                    api_key=api_key,
+                    base_url="https://open.bigmodel.cn/api/paas/v4/",
+                )
+            else:
+                logger.warning(f"[{self.name}] 不支持的LLM提供商: {provider}")
+                return None
         except Exception as e:
             logger.warning(f"[{self.name}] LLM初始化失败: {e}")
             return None
-
-        return None
 
     @abstractmethod
     def analyze(self, stock_data: StockData, **kwargs) -> Dict[str, Any]:

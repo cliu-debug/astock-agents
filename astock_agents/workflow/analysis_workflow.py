@@ -1,5 +1,12 @@
-"""分析工作流 - 使用LangGraph编排多智能体协作，支持并行执行"""
+"""分析工作流 - 使用LangGraph编排多智能体协作，支持并行执行
 
+增强功能：
+- 多轮辩论：支持可配置的辩论轮数，每轮多头和空头回应对方论点
+- 投票决策：辩论结束后各分析师投票，加权决定最终信号
+- 囚徒困境模型：在多空辩论中引入合作/背叛机制
+"""
+
+import json
 from typing import Dict, Any, Optional, TypedDict, Annotated, List
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -61,9 +68,15 @@ class AnalysisWorkflow:
         初始化分析工作流
 
         Args:
-            config: 配置字典
+            config: 配置字典，支持以下辩论相关参数：
+                - debate_rounds: 辩论轮数，默认2
+                - enable_prisoners_dilemma: 是否启用囚徒困境模型，默认True
         """
         self.config = config or {}
+
+        # 辩论配置
+        self.debate_rounds: int = self.config.get("debate_rounds", 2)
+        self.enable_prisoners_dilemma: bool = self.config.get("enable_prisoners_dilemma", True)
 
         # 初始化数据管理器
         self.data_manager = DataManager(config)
@@ -188,8 +201,15 @@ class AnalysisWorkflow:
         return state
 
     def _debate_node(self, state: WorkflowState) -> WorkflowState:
-        """辩论节点 - 多空辩论"""
-        logger.info("[工作流] 执行多空辩论")
+        """辩论节点 - 多轮辩论 + 投票决策 + 囚徒困境模型
+
+        流程：
+        1. 执行多轮辩论，每轮多头和空头回应对方论点
+        2. 辩论结束后，各分析师投票
+        3. 计算合作度评分（囚徒困境模型）
+        4. 加权投票决定最终信号
+        """
+        logger.info(f"[工作流] 执行多轮辩论 (轮数: {self.debate_rounds})")
 
         # 至少需要技术分析和基本面分析才能辩论
         has_min_data = state.get("technical") or state.get("fundamental")
@@ -199,23 +219,64 @@ class AnalysisWorkflow:
             return state
 
         try:
-            # 多头研究
-            bull_result = self.bull_researcher.analyze(
-                stock_data=state["stock_data"],
-                technical=state.get("technical"),
-                fundamental=state.get("fundamental"),
-                sentiment=state.get("sentiment"),
-                news=state.get("news")
-            )
+            # 多轮辩论
+            debate_history: List[Dict[str, Any]] = []
+            bull_result: Dict[str, Any] = {}
+            bear_result: Dict[str, Any] = {}
 
-            # 空头研究
-            bear_result = self.bear_researcher.analyze(
-                stock_data=state["stock_data"],
-                technical=state.get("technical"),
-                fundamental=state.get("fundamental"),
-                sentiment=state.get("sentiment"),
-                news=state.get("news")
-            )
+            for round_num in range(1, self.debate_rounds + 1):
+                logger.info(f"[工作流] 辩论第 {round_num}/{self.debate_rounds} 轮")
+
+                # 构建上下文：包含对方上一轮的论点
+                bull_context = None
+                bear_context = None
+                if round_num > 1 and debate_history:
+                    prev_round = debate_history[-1]
+                    bear_context = prev_round.get("bear_summary", "")
+                    bull_context = prev_round.get("bull_summary", "")
+
+                # 多头研究
+                bull_result = self.bull_researcher.analyze(
+                    stock_data=state["stock_data"],
+                    technical=state.get("technical"),
+                    fundamental=state.get("fundamental"),
+                    sentiment=state.get("sentiment"),
+                    news=state.get("news"),
+                    opponent_context=bear_context,
+                )
+
+                # 空头研究
+                bear_result = self.bear_researcher.analyze(
+                    stock_data=state["stock_data"],
+                    technical=state.get("technical"),
+                    fundamental=state.get("fundamental"),
+                    sentiment=state.get("sentiment"),
+                    news=state.get("news"),
+                    opponent_context=bull_context,
+                )
+
+                # 记录本轮辩论
+                round_record = {
+                    "round": round_num,
+                    "bull_arguments": bull_result.get("arguments", []),
+                    "bull_confidence": bull_result.get("confidence", 50),
+                    "bull_summary": bull_result.get("bull_thesis", ""),
+                    "bear_arguments": bear_result.get("arguments", []),
+                    "bear_confidence": bear_result.get("confidence", 50),
+                    "bear_summary": bear_result.get("bear_thesis", ""),
+                }
+                debate_history.append(round_record)
+
+            # 投票决策
+            votes = self._conduct_voting(state, bull_result, bear_result)
+
+            # 囚徒困境模型 - 计算合作度
+            cooperation_score = 0.5
+            nash_equilibrium = None
+            if self.enable_prisoners_dilemma:
+                cooperation_score, nash_equilibrium = self._apply_prisoners_dilemma(
+                    bull_result, bear_result, debate_history
+                )
 
             # 构建辩论结果
             debate = DebateResult(
@@ -224,14 +285,25 @@ class AnalysisWorkflow:
                 bear_arguments=bear_result.get("arguments", []),
                 bear_confidence=bear_result.get("confidence", 50),
                 debate_summary=self._summarize_debate(bull_result, bear_result),
-                winning_side=self._determine_winner(bull_result, bear_result),
+                winning_side=self._determine_winner_with_votes(votes, bull_result, bear_result, cooperation_score),
                 key_disagreements=self._find_disagreements(bull_result, bear_result),
                 bull_thesis=bull_result.get("bull_thesis"),
-                bear_thesis=bear_result.get("bear_thesis")
+                bear_thesis=bear_result.get("bear_thesis"),
+                debate_rounds=self.debate_rounds,
+                debate_history=debate_history,
+                votes=votes,
+                cooperation_score=cooperation_score,
+                nash_equilibrium=nash_equilibrium,
             )
 
             state["debate_result"] = debate
-            logger.info(f"[工作流] 辩论完成: 获胜方 {debate.winning_side}")
+            logger.info(
+                f"[工作流] 辩论完成: 获胜方 {debate.winning_side}, "
+                f"合作度 {cooperation_score:.2f}"
+            )
+
+            # 保存辩论历史到数据库
+            self._save_debate_to_db(state["stock_code"], debate)
 
         except Exception as e:
             error_msg = f"辩论失败: {str(e)}"
@@ -239,6 +311,227 @@ class AnalysisWorkflow:
             state["errors"] = state.get("errors", []) + [error_msg]
 
         return state
+
+    def _conduct_voting(
+        self,
+        state: WorkflowState,
+        bull_result: Dict[str, Any],
+        bear_result: Dict[str, Any],
+    ) -> Dict[str, str]:
+        """各分析师投票
+
+        技术分析师、基本面分析师、情绪分析师、新闻分析师各投一票，
+        投票基于各自的分析结果和置信度。
+
+        Args:
+            state: 工作流状态
+            bull_result: 多头研究结果
+            bear_result: 空头研究结果
+
+        Returns:
+            投票结果字典，key为分析师名称，value为投票倾向（bull/bear/neutral）
+        """
+        votes: Dict[str, str] = {}
+
+        # 技术分析师投票
+        technical = state.get("technical")
+        if technical and hasattr(technical, "signal"):
+            signal_value = technical.signal.value if hasattr(technical.signal, "value") else str(technical.signal)
+            if signal_value in ("强烈买入", "买入"):
+                votes["technical"] = "bull"
+            elif signal_value in ("强烈卖出", "卖出"):
+                votes["technical"] = "bear"
+            else:
+                votes["technical"] = "neutral"
+
+        # 基本面分析师投票
+        fundamental = state.get("fundamental")
+        if fundamental and hasattr(fundamental, "signal"):
+            signal_value = fundamental.signal.value if hasattr(fundamental.signal, "value") else str(fundamental.signal)
+            if signal_value in ("强烈买入", "买入"):
+                votes["fundamental"] = "bull"
+            elif signal_value in ("强烈卖出", "卖出"):
+                votes["fundamental"] = "bear"
+            else:
+                votes["fundamental"] = "neutral"
+
+        # 情绪分析师投票
+        sentiment = state.get("sentiment")
+        if sentiment and hasattr(sentiment, "signal"):
+            signal_value = sentiment.signal.value if hasattr(sentiment.signal, "value") else str(sentiment.signal)
+            if signal_value in ("强烈买入", "买入"):
+                votes["sentiment"] = "bull"
+            elif signal_value in ("强烈卖出", "卖出"):
+                votes["sentiment"] = "bear"
+            else:
+                votes["sentiment"] = "neutral"
+
+        # 新闻分析师投票
+        news = state.get("news")
+        if news and hasattr(news, "signal"):
+            signal_value = news.signal.value if hasattr(news.signal, "value") else str(news.signal)
+            if signal_value in ("强烈买入", "买入"):
+                votes["news"] = "bull"
+            elif signal_value in ("强烈卖出", "卖出"):
+                votes["news"] = "bear"
+            else:
+                votes["news"] = "neutral"
+
+        logger.info(f"[工作流] 投票结果: {votes}")
+        return votes
+
+    def _apply_prisoners_dilemma(
+        self,
+        bull_result: Dict[str, Any],
+        bear_result: Dict[str, Any],
+        debate_history: List[Dict[str, Any]],
+    ) -> tuple:
+        """应用囚徒困境模型
+
+        判断多空双方是否"合作"（承认对方合理论点）或"背叛"（无视对方论点）：
+        - 双方合作：信号置信度提升
+        - 一方背叛：该方权重降低
+        - 双方背叛：置信度均降低
+
+        纳什均衡点作为最终决策参考。
+
+        Args:
+            bull_result: 多头研究结果
+            bear_result: 空头研究结果
+            debate_history: 辩论历史记录
+
+        Returns:
+            (合作度评分, 纳什均衡分析) 元组
+        """
+        bull_conf = bull_result.get("confidence", 50)
+        bear_conf = bear_result.get("confidence", 50)
+
+        # 判断是否合作：置信度差距小表示双方互相认可（合作）
+        conf_gap = abs(bull_conf - bear_conf)
+
+        # 分析辩论历史中的回应质量
+        bull_cooperates = True
+        bear_cooperates = True
+
+        if len(debate_history) > 1:
+            # 检查后续轮次是否回应了对方论点
+            for i in range(1, len(debate_history)):
+                prev_bear_args = debate_history[i - 1].get("bear_arguments", [])
+                curr_bull_args = debate_history[i].get("bull_arguments", [])
+
+                prev_bull_args = debate_history[i - 1].get("bull_arguments", [])
+                curr_bear_args = debate_history[i].get("bear_arguments", [])
+
+                # 如果后续论据数量明显减少，视为背叛（未认真回应对方）
+                if prev_bear_args and len(curr_bull_args) < len(prev_bear_args) * 0.5:
+                    bull_cooperates = False
+                if prev_bull_args and len(curr_bear_args) < len(prev_bull_args) * 0.5:
+                    bear_cooperates = False
+
+        # 计算合作度评分
+        if bull_cooperates and bear_cooperates:
+            # 双方合作 - 高合作度
+            cooperation_score = min(0.5 + (1.0 - conf_gap / 100) * 0.5, 1.0)
+            nash_equilibrium = "双方合作 - 置信度可信，信号强度可提升"
+        elif bull_cooperates and not bear_cooperates:
+            # 空头背叛 - 降低空头权重
+            cooperation_score = 0.3
+            nash_equilibrium = "空头背叛 - 空头论据可信度降低，多头权重提升"
+        elif not bull_cooperates and bear_cooperates:
+            # 多头背叛 - 降低多头权重
+            cooperation_score = 0.3
+            nash_equilibrium = "多头背叛 - 多头论据可信度降低，空头权重提升"
+        else:
+            # 双方背叛 - 低合作度
+            cooperation_score = 0.2
+            nash_equilibrium = "双方背叛 - 均未认真回应对方，信号可信度降低"
+
+        logger.info(
+            f"[工作流] 囚徒困境: 多头{'合作' if bull_cooperates else '背叛'}, "
+            f"空头{'合作' if bear_cooperates else '背叛'}, "
+            f"合作度={cooperation_score:.2f}"
+        )
+
+        return cooperation_score, nash_equilibrium
+
+    @staticmethod
+    def _determine_winner_with_votes(
+        votes: Dict[str, str],
+        bull_result: Dict[str, Any],
+        bear_result: Dict[str, Any],
+        cooperation_score: float,
+    ) -> str:
+        """基于投票和合作度确定获胜方
+
+        投票权重根据各分析师置信度和合作度调整。
+
+        Args:
+            votes: 各分析师投票结果
+            bull_result: 多头研究结果
+            bear_result: 空头研究结果
+            cooperation_score: 合作度评分
+
+        Returns:
+            获胜方: bull/bear/neutral
+        """
+        # 基础权重
+        base_weights = {
+            "technical": 0.35,
+            "fundamental": 0.30,
+            "sentiment": 0.15,
+            "news": 0.20,
+        }
+
+        # 计算加权投票
+        bull_score = 0.0
+        bear_score = 0.0
+        total_weight = 0.0
+
+        for analyst, vote in votes.items():
+            weight = base_weights.get(analyst, 0.25)
+            # 合作度高时，投票权重正常；合作度低时，投票权重降低
+            adjusted_weight = weight * (0.5 + cooperation_score * 0.5)
+
+            if vote == "bull":
+                bull_score += adjusted_weight
+            elif vote == "bear":
+                bear_score += adjusted_weight
+            total_weight += adjusted_weight
+
+        # 加上原始置信度的影响
+        bull_conf = bull_result.get("confidence", 50) / 100.0
+        bear_conf = bear_result.get("confidence", 50) / 100.0
+        bull_score += bull_conf * 0.3
+        bear_score += bear_conf * 0.3
+
+        if bull_score > bear_score + 0.1:
+            return "bull"
+        elif bear_score > bull_score + 0.1:
+            return "bear"
+        return "neutral"
+
+    def _save_debate_to_db(self, stock_code: str, debate: DebateResult) -> None:
+        """保存辩论历史到数据库
+
+        Args:
+            stock_code: 股票代码
+            debate: 辩论结果
+        """
+        try:
+            from astock_agents.db.database import Database
+            db = Database()
+            db.save_debate_history(
+                stock_code=stock_code,
+                debate_rounds=debate.debate_rounds,
+                debate_history_json=json.dumps(debate.debate_history, ensure_ascii=False),
+                votes_json=json.dumps(debate.votes, ensure_ascii=False),
+                cooperation_score=debate.cooperation_score,
+                nash_equilibrium=debate.nash_equilibrium,
+                winning_side=debate.winning_side,
+                debate_summary=debate.debate_summary,
+            )
+        except Exception as e:
+            logger.warning(f"[工作流] 辩论历史保存失败: {e}")
 
     def _generate_proposal_node(self, state: WorkflowState) -> WorkflowState:
         """生成交易提案节点"""
@@ -471,9 +764,17 @@ class AnalysisWorkflow:
                 debate.winning_side, "平局"
             )
             lines.append("【多空辩论】")
+            lines.append(f"辩论轮数: {debate.debate_rounds}")
             lines.append(f"获胜方: {winner}")
             lines.append(f"多头论据: {len(debate.bull_arguments)}条")
             lines.append(f"空头论据: {len(debate.bear_arguments)}条")
+            # 博弈论增强信息
+            if debate.votes:
+                lines.append(f"投票结果: {debate.votes}")
+            if debate.cooperation_score is not None:
+                lines.append(f"合作度评分: {debate.cooperation_score:.2f}")
+            if debate.nash_equilibrium:
+                lines.append(f"纳什均衡: {debate.nash_equilibrium}")
             lines.append("")
 
         # 交易提案

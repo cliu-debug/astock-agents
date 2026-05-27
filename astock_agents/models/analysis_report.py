@@ -148,6 +148,13 @@ class DebateResult(BaseModel):
     bull_thesis: Optional[str] = Field(default=None, description="LLM生成的多头论证")
     bear_thesis: Optional[str] = Field(default=None, description="LLM生成的空头论证")
 
+    # 博弈论增强字段
+    debate_rounds: int = Field(default=1, description="辩论轮数")
+    debate_history: List[Dict[str, Any]] = Field(default_factory=list, description="辩论历史记录")
+    votes: Dict[str, str] = Field(default_factory=dict, description="各分析师投票结果")
+    cooperation_score: float = Field(default=0.5, ge=0.0, le=1.0, description="合作度评分(0-1)")
+    nash_equilibrium: Optional[str] = Field(default=None, description="纳什均衡分析")
+
 
 class TradeProposal(BaseModel):
     """交易提案"""
