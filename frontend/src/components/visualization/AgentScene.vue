@@ -92,6 +92,10 @@ let animationFrameId = 0
 let raycaster: THREE.Raycaster
 let mouse: THREE.Vector2
 let particles: THREE.Points
+/** 是否自动旋转（鼠标悬停时暂停） */
+let autoRotate = true
+/** 场景根组（用于整体旋转） */
+let sceneGroup: THREE.Group
 
 const agentMeshes = new Map<string, THREE.Group>()
 const agentBaseY = new Map<string, number>()
@@ -273,7 +277,7 @@ function createAgentOrbs(): void {
   props.agents.forEach((agent, index) => {
     const pos = new THREE.Vector3(positions[index].x, positions[index].y, 0)
     const orb = createAgentOrb(agent, pos)
-    scene.add(orb)
+    sceneGroup.add(orb)
     agentMeshes.set(agent.id, orb)
     agentBaseY.set(agent.id, positions[index].y)
   })
@@ -297,7 +301,7 @@ function createConnections(): void {
       opacity: 0.15,
     })
     const line = new THREE.Line(lineGeometry, lineMaterial)
-    scene.add(line)
+    sceneGroup.add(line)
 
     // 数据流粒子 - 沿连接线移动的小光点
     const particleGeometry = new THREE.SphereGeometry(0.04, 6, 6)
@@ -307,7 +311,7 @@ function createConnections(): void {
       opacity: 0,
     })
     const particleMesh = new THREE.Mesh(particleGeometry, particleMaterial)
-    scene.add(particleMesh)
+    sceneGroup.add(particleMesh)
 
     dataFlowParticles.push({
       mesh: particleMesh,
@@ -342,7 +346,7 @@ function createParticles(): void {
   })
 
   particles = new THREE.Points(geometry, material)
-  scene.add(particles)
+  sceneGroup.add(particles)
 }
 
 function handleClick(event: MouseEvent): void {
@@ -378,6 +382,17 @@ function handleClick(event: MouseEvent): void {
   } else {
     selectedAgent.value = null
   }
+}
+
+/** 鼠标进入场景时暂停自动旋转 */
+function handleMouseEnter(): void {
+  autoRotate = false
+}
+
+/** 鼠标离开场景时恢复自动旋转 */
+function handleMouseLeave(): void {
+  autoRotate = true
+  selectedAgent.value = null
 }
 
 /** 更新智能体视觉状态 */
@@ -469,6 +484,12 @@ function animate(): void {
   animationFrameId = requestAnimationFrame(animate)
 
   const time = Date.now()
+
+  // 自动旋转：像地球一样3D立体旋转
+  if (autoRotate && sceneGroup) {
+    sceneGroup.rotation.y += 0.005
+  }
+
   const positions = getAgentPositions(props.agents.length)
 
   agentMeshes.forEach((group, id) => {
@@ -613,6 +634,12 @@ function initScene(): void {
   // 添加雾效增加深度感
   scene.fog = new THREE.FogExp2(0x0f172a, 0.02)
 
+  // 创建场景根组（用于整体旋转）
+  sceneGroup = new THREE.Group()
+  // 地球自转轴倾斜效果（约23.5度）
+  sceneGroup.rotation.x = 0.15
+  scene.add(sceneGroup)
+
   const aspect = width / height
   camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000)
   camera.position.set(0, 0, 14)
@@ -657,6 +684,8 @@ function initScene(): void {
   createParticles()
 
   containerRef.value.addEventListener('click', handleClick)
+  containerRef.value.addEventListener('mouseenter', handleMouseEnter)
+  containerRef.value.addEventListener('mouseleave', handleMouseLeave)
 
   animate()
 }
@@ -666,6 +695,8 @@ function cleanup(): void {
 
   if (containerRef.value) {
     containerRef.value.removeEventListener('click', handleClick)
+    containerRef.value.removeEventListener('mouseenter', handleMouseEnter)
+    containerRef.value.removeEventListener('mouseleave', handleMouseLeave)
   }
 
   scene?.traverse((object) => {

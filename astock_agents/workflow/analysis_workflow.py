@@ -4,6 +4,8 @@
 - 多轮辩论：支持可配置的辩论轮数，每轮多头和空头回应对方论点
 - 投票决策：辩论结束后各分析师投票，加权决定最终信号
 - 囚徒困境模型：在多空辩论中引入合作/背叛机制
+- 用户记忆系统：自动记录分析行为，根据用户画像调整信号
+- MCP工具集成：智能体可通过MCP协议调用标准化金融工具
 """
 
 import json
@@ -50,6 +52,9 @@ class WorkflowState(TypedDict):
     # 最终报告
     report: Optional[AnalysisReport]
 
+    # 用户记忆调整信息
+    memory_adjustment: Optional[Dict[str, Any]]
+
     # 错误收集
     errors: List[str]
 
@@ -68,9 +73,12 @@ class AnalysisWorkflow:
         初始化分析工作流
 
         Args:
-            config: 配置字典，支持以下辩论相关参数：
+            config: 配置字典，支持以下参数：
                 - debate_rounds: 辩论轮数，默认2
                 - enable_prisoners_dilemma: 是否启用囚徒困境模型，默认True
+                - enable_memory: 是否启用用户记忆系统，默认True
+                - user_id: 用户ID，用于记忆系统，默认"default"
+                - enable_mcp: 是否启用MCP工具，默认True
         """
         self.config = config or {}
 
@@ -78,8 +86,35 @@ class AnalysisWorkflow:
         self.debate_rounds: int = self.config.get("debate_rounds", 2)
         self.enable_prisoners_dilemma: bool = self.config.get("enable_prisoners_dilemma", True)
 
+        # 用户记忆配置
+        self.enable_memory: bool = self.config.get("enable_memory", True)
+        self.user_id: str = self.config.get("user_id", "default")
+
+        # MCP工具配置
+        self.enable_mcp: bool = self.config.get("enable_mcp", True)
+
         # 初始化数据管理器
         self.data_manager = DataManager(config)
+
+        # 初始化用户记忆服务
+        self.memory_service = None
+        if self.enable_memory:
+            try:
+                from astock_agents.services.user_memory import UserMemoryService
+                self.memory_service = UserMemoryService()
+                logger.info("[工作流] 用户记忆系统已启用")
+            except Exception as e:
+                logger.warning(f"[工作流] 用户记忆系统初始化失败: {e}")
+
+        # 初始化MCP服务
+        self.mcp_server = None
+        if self.enable_mcp:
+            try:
+                from astock_agents.services.mcp_server import MCPServer
+                self.mcp_server = MCPServer(data_manager=self.data_manager)
+                logger.info(f"[工作流] MCP服务已启用，注册 {len(self.mcp_server.list_tools())} 个工具")
+            except Exception as e:
+                logger.warning(f"[工作流] MCP服务初始化失败: {e}")
 
         # 初始化各智能体
         self.technical_analyst = TechnicalAnalyst(config=config)
@@ -90,6 +125,17 @@ class AnalysisWorkflow:
         self.bear_researcher = BearResearcher(config=config)
         self.trader = Trader(config=config)
         self.risk_manager = RiskManager(config=config)
+
+        # 将MCP服务注入到各智能体
+        if self.mcp_server:
+            for agent in [
+                self.technical_analyst, self.fundamental_analyst,
+                self.sentiment_analyst, self.news_analyst,
+                self.bull_researcher, self.bear_researcher,
+                self.trader, self.risk_manager,
+            ]:
+                if hasattr(agent, "mcp_server"):
+                    agent.mcp_server = self.mcp_server
 
         # 并行执行线程池
         self._executor = ThreadPoolExecutor(max_workers=4)
@@ -107,14 +153,16 @@ class AnalysisWorkflow:
         workflow.add_node("fetch_data", self._fetch_data_node)
         workflow.add_node("parallel_analysis", self._parallel_analysis_node)
         workflow.add_node("debate", self._debate_node)
+        workflow.add_node("memory_adjust", self._memory_adjust_node)
         workflow.add_node("generate_proposal", self._generate_proposal_node)
         workflow.add_node("risk_assessment", self._risk_assessment_node)
         workflow.add_node("generate_report", self._generate_report_node)
 
-        # 线性流程：数据获取 -> 并行分析 -> 辩论 -> 提案 -> 风控 -> 报告
+        # 线性流程：数据获取 -> 并行分析 -> 辩论 -> 记忆调整 -> 提案 -> 风控 -> 报告
         workflow.add_edge("fetch_data", "parallel_analysis")
         workflow.add_edge("parallel_analysis", "debate")
-        workflow.add_edge("debate", "generate_proposal")
+        workflow.add_edge("debate", "memory_adjust")
+        workflow.add_edge("memory_adjust", "generate_proposal")
         workflow.add_edge("generate_proposal", "risk_assessment")
         workflow.add_edge("risk_assessment", "generate_report")
         workflow.add_edge("generate_report", END)
@@ -533,6 +581,87 @@ class AnalysisWorkflow:
         except Exception as e:
             logger.warning(f"[工作流] 辩论历史保存失败: {e}")
 
+    def _memory_adjust_node(self, state: WorkflowState) -> WorkflowState:
+        """用户记忆调整节点 - 根据用户画像调整分析信号
+
+        读取用户历史偏好（风险偏好、偏好行业、持仓周期），
+        对辩论结果和最终信号进行个性化调整。
+        """
+        logger.info("[工作流] 执行用户记忆调整")
+
+        if not self.memory_service:
+            logger.info("[工作流] 用户记忆系统未启用，跳过调整")
+            state["memory_adjustment"] = None
+            return state
+
+        try:
+            stock_code = state["stock_code"]
+
+            # 获取用户画像
+            profile = self.memory_service.get_user_profile(self.user_id)
+            risk_pref = profile.get("risk_preference", "稳健")
+            holding_pref = profile.get("holding_preference", "中线")
+            preferred_industries = profile.get("preferred_industries", [])
+            dimension_weights = profile.get("dimension_weights", {})
+
+            # 获取该股票的历史记忆
+            stock_memory = self.memory_service.get_stock_memory(self.user_id, stock_code)
+
+            # 构建调整信息
+            adjustment: Dict[str, Any] = {
+                "user_id": self.user_id,
+                "risk_preference": risk_pref,
+                "holding_preference": holding_pref,
+                "preferred_industries": preferred_industries,
+                "dimension_weights": dimension_weights,
+                "stock_memory": stock_memory,
+                "adjustment_reasons": [],
+            }
+
+            # 根据辩论结果获取调整后的信号
+            debate = state.get("debate_result")
+            if debate:
+                raw_signal = "买入" if debate.winning_side == "bull" else (
+                    "卖出" if debate.winning_side == "bear" else "持有"
+                )
+                adjusted = self.memory_service.get_preference_adjusted_signal(
+                    self.user_id, stock_code, raw_signal
+                )
+                adjustment["raw_signal"] = raw_signal
+                adjustment["adjusted_signal"] = adjusted.get("adjusted_signal", raw_signal)
+                adjustment["adjustment_reasons"] = adjusted.get("adjustment_reasons", [])
+
+                # 如果信号被调整，更新辩论获胜方
+                if adjusted.get("adjusted_signal") != raw_signal:
+                    adj_signal = adjusted["adjusted_signal"]
+                    if adj_signal in ("强烈买入", "买入") and debate.winning_side != "bull":
+                        logger.info(f"[记忆] 信号调整: {raw_signal} -> {adj_signal} (基于用户偏好)")
+                    elif adj_signal in ("强烈卖出", "卖出") and debate.winning_side != "bear":
+                        logger.info(f"[记忆] 信号调整: {raw_signal} -> {adj_signal} (基于用户偏好)")
+
+            # 根据用户偏好调整分析维度权重
+            if dimension_weights:
+                adjustment["weight_adjustment_note"] = (
+                    f"基于用户画像，分析维度权重已调整: "
+                    f"技术面={dimension_weights.get('technical', 0.35):.0%}, "
+                    f"基本面={dimension_weights.get('fundamental', 0.30):.0%}, "
+                    f"情绪面={dimension_weights.get('sentiment', 0.15):.0%}, "
+                    f"新闻面={dimension_weights.get('news', 0.20):.0%}"
+                )
+
+            state["memory_adjustment"] = adjustment
+            logger.info(
+                f"[工作流] 记忆调整完成: 风险偏好={risk_pref}, "
+                f"持仓偏好={holding_pref}, 调整原因={adjustment.get('adjustment_reasons', [])}"
+            )
+
+        except Exception as e:
+            error_msg = f"用户记忆调整失败: {str(e)}"
+            logger.warning(f"[工作流] {error_msg}")
+            state["memory_adjustment"] = None
+
+        return state
+
     def _generate_proposal_node(self, state: WorkflowState) -> WorkflowState:
         """生成交易提案节点"""
         logger.info("[工作流] 生成交易提案")
@@ -588,7 +717,7 @@ class AnalysisWorkflow:
         return state
 
     def _generate_report_node(self, state: WorkflowState) -> WorkflowState:
-        """生成报告节点"""
+        """生成报告节点 - 同时自动记录分析行为到记忆系统"""
         logger.info("[工作流] 生成分析报告")
 
         try:
@@ -617,6 +746,28 @@ class AnalysisWorkflow:
 
             state["report"] = report
             logger.info("[工作流] 分析报告生成完成")
+
+            # 自动记录分析行为到记忆系统
+            if self.memory_service:
+                try:
+                    signal_str = "未知"
+                    if report.final_signal:
+                        signal_str = report.final_signal.value if hasattr(report.final_signal, "value") else str(report.final_signal)
+
+                    industry = None
+                    if state.get("stock_data") and hasattr(state["stock_data"], "industry"):
+                        industry = state["stock_data"].industry
+
+                    self.memory_service.record_analysis(
+                        user_id=self.user_id,
+                        stock_code=state["stock_code"],
+                        signal=signal_str,
+                        confidence=report.final_confidence or 50,
+                        industry=industry,
+                    )
+                    logger.info(f"[记忆] 已自动记录分析行为: {state['stock_code']} {signal_str}")
+                except Exception as e:
+                    logger.warning(f"[记忆] 自动记录分析行为失败: {e}")
 
         except Exception as e:
             error_msg = f"生成报告失败: {str(e)}"
@@ -653,6 +804,7 @@ class AnalysisWorkflow:
             "trade_proposal": None,
             "risk_assessment_result": None,
             "report": None,
+            "memory_adjustment": None,
             "errors": []
         }
 
@@ -775,6 +927,21 @@ class AnalysisWorkflow:
                 lines.append(f"合作度评分: {debate.cooperation_score:.2f}")
             if debate.nash_equilibrium:
                 lines.append(f"纳什均衡: {debate.nash_equilibrium}")
+            lines.append("")
+
+        # 用户记忆调整信息
+        if state.get("memory_adjustment"):
+            mem = state["memory_adjustment"]
+            lines.append("【用户画像调整】")
+            lines.append(f"风险偏好: {mem.get('risk_preference', '未知')}")
+            lines.append(f"持仓偏好: {mem.get('holding_preference', '未知')}")
+            if mem.get("adjustment_reasons"):
+                for reason in mem["adjustment_reasons"]:
+                    lines.append(f"  - {reason}")
+            if mem.get("raw_signal") and mem.get("adjusted_signal"):
+                lines.append(f"信号调整: {mem['raw_signal']} -> {mem['adjusted_signal']}")
+            if mem.get("weight_adjustment_note"):
+                lines.append(mem["weight_adjustment_note"])
             lines.append("")
 
         # 交易提案

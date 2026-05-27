@@ -33,6 +33,8 @@ class BaseAgent(ABC):
         self.config = config or {}
         # 如果未传入LLM，尝试从配置创建
         self.llm = llm or self._create_default_llm()
+        # MCP服务实例（由工作流注入）
+        self.mcp_server: Optional[Any] = None
 
         logger.info(f"智能体初始化: {name} ({role})")
 
@@ -40,7 +42,8 @@ class BaseAgent(ABC):
         """创建默认LLM（如果配置了API密钥）
 
         支持的提供商：openai, anthropic, qwen, deepseek, ollama, zhipu
-        当 self.config 中未包含 llm 配置时，自动从环境变量加载
+        当 self.config 中未包含 llm 配置时，自动从环境变量加载。
+        当所有API Key均未配置时，自动尝试Ollama本地模型（无需Key）。
         """
         llm_config = self.config.get("llm", {})
 
@@ -56,8 +59,8 @@ class BaseAgent(ABC):
             if provider == "openai":
                 api_key = llm_config.get("openai", {}).get("api_key")
                 if not api_key:
-                    logger.warning(f"[{self.name}] 未配置OpenAI API密钥，LLM功能不可用")
-                    return None
+                    logger.warning(f"[{self.name}] 未配置OpenAI API密钥，尝试降级到Ollama本地模型")
+                    return self._try_ollama_fallback()
 
                 from langchain_openai import ChatOpenAI
                 return ChatOpenAI(
@@ -68,8 +71,8 @@ class BaseAgent(ABC):
             elif provider == "anthropic":
                 api_key = llm_config.get("anthropic", {}).get("api_key")
                 if not api_key:
-                    logger.warning(f"[{self.name}] 未配置Anthropic API密钥，LLM功能不可用")
-                    return None
+                    logger.warning(f"[{self.name}] 未配置Anthropic API密钥，尝试降级到Ollama本地模型")
+                    return self._try_ollama_fallback()
 
                 from langchain_anthropic import ChatAnthropic
                 return ChatAnthropic(
@@ -80,8 +83,8 @@ class BaseAgent(ABC):
             elif provider == "qwen":
                 api_key = llm_config.get("qwen", {}).get("api_key")
                 if not api_key:
-                    logger.warning(f"[{self.name}] 未配置通义千问API密钥，LLM功能不可用")
-                    return None
+                    logger.warning(f"[{self.name}] 未配置通义千问API密钥，尝试降级到Ollama本地模型")
+                    return self._try_ollama_fallback()
 
                 from langchain_openai import ChatOpenAI
                 return ChatOpenAI(
@@ -93,8 +96,8 @@ class BaseAgent(ABC):
             elif provider == "deepseek":
                 api_key = llm_config.get("deepseek", {}).get("api_key")
                 if not api_key:
-                    logger.warning(f"[{self.name}] 未配置DeepSeek API密钥，LLM功能不可用")
-                    return None
+                    logger.warning(f"[{self.name}] 未配置DeepSeek API密钥，尝试降级到Ollama本地模型")
+                    return self._try_ollama_fallback()
 
                 from langchain_openai import ChatOpenAI
                 return ChatOpenAI(
@@ -104,18 +107,12 @@ class BaseAgent(ABC):
                     base_url="https://api.deepseek.com/v1",
                 )
             elif provider == "ollama":
-                from langchain_openai import ChatOpenAI
-                return ChatOpenAI(
-                    model=llm_config.get("ollama", {}).get("model", "qwen2.5:7b"),
-                    temperature=llm_config.get("ollama", {}).get("temperature", 0.3),
-                    api_key="ollama",  # Ollama不需要真实key
-                    base_url=llm_config.get("ollama", {}).get("base_url", "http://localhost:11434/v1"),
-                )
+                return self._try_ollama_fallback()
             elif provider == "zhipu":
                 api_key = llm_config.get("zhipu", {}).get("api_key")
                 if not api_key:
-                    logger.warning(f"[{self.name}] 未配置智谱AI API密钥，LLM功能不可用")
-                    return None
+                    logger.warning(f"[{self.name}] 未配置智谱AI API密钥，尝试降级到Ollama本地模型")
+                    return self._try_ollama_fallback()
 
                 from langchain_openai import ChatOpenAI
                 return ChatOpenAI(
@@ -125,10 +122,47 @@ class BaseAgent(ABC):
                     base_url="https://open.bigmodel.cn/api/paas/v4/",
                 )
             else:
-                logger.warning(f"[{self.name}] 不支持的LLM提供商: {provider}")
-                return None
+                logger.warning(f"[{self.name}] 不支持的LLM提供商: {provider}，尝试降级到Ollama")
+                return self._try_ollama_fallback()
         except Exception as e:
-            logger.warning(f"[{self.name}] LLM初始化失败: {e}")
+            logger.warning(f"[{self.name}] LLM初始化失败: {e}，尝试降级到Ollama")
+            return self._try_ollama_fallback()
+
+    def _try_ollama_fallback(self) -> Optional[Any]:
+        """尝试连接Ollama本地模型作为降级方案
+
+        Ollama不需要API Key，只需要本地运行Ollama服务。
+        如果Ollama也不可用，则返回None（纯规则引擎模式）。
+
+        Returns:
+            ChatOpenAI实例（连接Ollama）或None
+        """
+        try:
+            import urllib.request
+            # 检测Ollama服务是否可用
+            ollama_url = self.config.get("llm", {}).get("ollama", {}).get(
+                "base_url", "http://localhost:11434"
+            )
+            base_url = ollama_url.rstrip("/")
+            try:
+                req = urllib.request.Request(f"{base_url}/api/tags", method="GET")
+                with urllib.request.urlopen(req, timeout=2) as resp:
+                    if resp.status == 200:
+                        logger.info(f"[{self.name}] 检测到Ollama本地服务，使用本地模型")
+                        from langchain_openai import ChatOpenAI
+                        return ChatOpenAI(
+                            model=self.config.get("llm", {}).get("ollama", {}).get("model", "qwen2.5:7b"),
+                            temperature=0.3,
+                            api_key="ollama",
+                            base_url=f"{base_url}/v1",
+                        )
+            except Exception:
+                pass
+
+            logger.info(f"[{self.name}] Ollama本地服务不可用，LLM功能关闭（使用纯规则引擎模式）")
+            return None
+        except Exception as e:
+            logger.debug(f"[{self.name}] Ollama降级检测失败: {e}")
             return None
 
     @abstractmethod
@@ -401,3 +435,108 @@ class BaseAgent(ABC):
         """记录分析结果"""
         logger.info(f"[{self.name}] 分析完成")
         logger.debug(f"[{self.name}] 结果: {result}")
+
+    def call_mcp_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """通过MCP协议调用标准化金融工具
+
+        当智能体需要获取额外数据时，可通过MCP协议调用已注册的工具。
+        工具列表：get_stock_price, get_stock_kline, get_financial_report,
+                  get_news, calculate_indicator, get_capital_flow
+
+        Args:
+            tool_name: 工具名称
+            arguments: 工具参数字典
+
+        Returns:
+            工具执行结果字典，调用失败时返回None
+        """
+        if not self.mcp_server:
+            logger.debug(f"[{self.name}] MCP服务未启用，无法调用工具: {tool_name}")
+            return None
+
+        try:
+            result = self.mcp_server.call_tool(tool_name, arguments)
+            if result.get("success"):
+                logger.info(f"[{self.name}] MCP工具调用成功: {tool_name}")
+                return result.get("data")
+            else:
+                logger.warning(f"[{self.name}] MCP工具调用失败: {tool_name}, {result.get('error')}")
+                return None
+        except Exception as e:
+            logger.warning(f"[{self.name}] MCP工具调用异常: {tool_name}, {e}")
+            return None
+
+    def get_mcp_stock_price(self, stock_code: str) -> Optional[Dict[str, Any]]:
+        """通过MCP获取股票实时行情
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            行情数据字典
+        """
+        return self.call_mcp_tool("get_stock_price", {"stock_code": stock_code})
+
+    def get_mcp_kline(self, stock_code: str, days: int = 120) -> Optional[Dict[str, Any]]:
+        """通过MCP获取K线数据
+
+        Args:
+            stock_code: 股票代码
+            days: 获取天数
+
+        Returns:
+            K线数据字典
+        """
+        return self.call_mcp_tool("get_stock_kline", {"stock_code": stock_code, "days": days})
+
+    def get_mcp_financial_report(self, stock_code: str) -> Optional[Dict[str, Any]]:
+        """通过MCP获取财务报告
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            财务报告数据字典
+        """
+        return self.call_mcp_tool("get_financial_report", {"stock_code": stock_code})
+
+    def get_mcp_news(self, stock_code: str, limit: int = 10) -> Optional[Dict[str, Any]]:
+        """通过MCP获取新闻资讯
+
+        Args:
+            stock_code: 股票代码
+            limit: 返回条数
+
+        Returns:
+            新闻数据字典
+        """
+        return self.call_mcp_tool("get_news", {"stock_code": stock_code, "limit": limit})
+
+    def get_mcp_capital_flow(self, stock_code: str, days: int = 10) -> Optional[Dict[str, Any]]:
+        """通过MCP获取资金流向
+
+        Args:
+            stock_code: 股票代码
+            days: 获取天数
+
+        Returns:
+            资金流向数据字典
+        """
+        return self.call_mcp_tool("get_capital_flow", {"stock_code": stock_code, "days": days})
+
+    def get_mcp_indicator(self, stock_code: str, indicator: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """通过MCP计算技术指标
+
+        Args:
+            stock_code: 股票代码
+            indicator: 指标名称（MA/MACD/RSI/KDJ/BOLL）
+            params: 指标参数
+
+        Returns:
+            技术指标数据字典
+        """
+        return self.call_mcp_tool("calculate_indicator", {
+            "stock_code": stock_code,
+            "indicator": indicator,
+            "params": params or {},
+        })
