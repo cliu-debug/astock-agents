@@ -93,30 +93,6 @@ const navItems = [
     label: '通知中心',
     icon: 'notification',
   },
-  {
-    path: '/llm-config',
-    name: 'llmConfig',
-    label: 'LLM配置',
-    icon: 'llm-config',
-  },
-  {
-    path: '/memory',
-    name: 'memory',
-    label: '记忆系统',
-    icon: 'memory',
-  },
-  {
-    path: '/mcp-tools',
-    name: 'mcpTools',
-    label: 'MCP工具',
-    icon: 'mcp-tools',
-  },
-  {
-    path: '/debate-config',
-    name: 'debateConfig',
-    label: '博弈论',
-    icon: 'debate-config',
-  },
 ]
 
 const currentNav = computed(() => route.name as string)
@@ -209,22 +185,6 @@ function navigateTo(path: string) {
           <!-- 通知中心 -->
           <svg v-else-if="item.icon === 'notification'" class="nav-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/>
-          </svg>
-          <!-- LLM配置 -->
-          <svg v-else-if="item.icon === 'llm-config'" class="nav-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2a4 4 0 014 4v2a4 4 0 01-8 0V6a4 4 0 014-4z"/><path d="M6 10v1a6 6 0 0012 0v-1"/><path d="M12 17v4"/><path d="M8 21h8"/>
-          </svg>
-          <!-- 记忆系统 -->
-          <svg v-else-if="item.icon === 'memory'" class="nav-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><path d="M12 6v6l4 2"/>
-          </svg>
-          <!-- MCP工具 -->
-          <svg v-else-if="item.icon === 'mcp-tools'" class="nav-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
-          </svg>
-          <!-- 博弈论 -->
-          <svg v-else-if="item.icon === 'debate-config'" class="nav-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M16 3h5v5"/><path d="M8 3H3v5"/><path d="M12 22V8"/><path d="M21 3l-9 9"/><path d="M3 3l9 9"/>
           </svg>
           <span class="nav-label" v-if="!sidebarCollapsed">{{ item.label }}</span>
         </button>

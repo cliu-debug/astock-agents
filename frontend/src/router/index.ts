@@ -88,30 +88,6 @@ const router = createRouter({
       component: () => import('@/views/NotificationView.vue'),
       meta: { title: '通知中心' },
     },
-    {
-      path: '/llm-config',
-      name: 'llmConfig',
-      component: () => import('@/views/LLMConfigView.vue'),
-      meta: { title: 'LLM配置' },
-    },
-    {
-      path: '/memory',
-      name: 'memory',
-      component: () => import('@/views/MemoryView.vue'),
-      meta: { title: '记忆系统' },
-    },
-    {
-      path: '/mcp-tools',
-      name: 'mcpTools',
-      component: () => import('@/views/MCPToolsView.vue'),
-      meta: { title: 'MCP工具' },
-    },
-    {
-      path: '/debate-config',
-      name: 'debateConfig',
-      component: () => import('@/views/DebateConfigView.vue'),
-      meta: { title: '博弈论配置' },
-    },
   ],
 })
 
