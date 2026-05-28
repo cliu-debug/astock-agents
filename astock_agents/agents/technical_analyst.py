@@ -50,46 +50,85 @@ class TechnicalAnalyst(BaseAgent):
         )
     
     def analyze(self, stock_data: StockData, **kwargs) -> TechnicalAnalysis:
-        """执行技术分析"""
+        """执行技术分析（增强版：含自主规划+推理链+反思）"""
         logger.info(f"[{self.name}] 开始技术分析: {stock_data.stock_code}")
-        
+
+        # 清空上一次的推理链
+        self._clear_reasoning_chain()
+
+        # 自主规划：创建任务计划
+        plan = self._plan_analysis_tasks(stock_data)
+
         if not stock_data.prices:
             logger.warning(f"[{self.name}] 无价格数据")
+            self._update_status("error", "无价格数据")
             return self._create_empty_analysis()
-        
-        # 准备数据（创建副本，防止后续方法对df的修改影响原始数据）
+
+        # 步骤1：数据校验
+        plan.mark_step_executing("validate_data")
+        self._update_status("executing", "正在校验数据完整性")
+        data_points_count = len(stock_data.prices)
+        data_quality = "good" if data_points_count >= 120 else (
+            "normal" if data_points_count >= 60 else (
+                "poor" if data_points_count >= 30 else "insufficient"
+            )
+        )
+        self._add_reasoning_step(
+            "数据校验",
+            f"检查{stock_data.stock_name}的价格数据",
+            f"数据量={data_points_count}天",
+            f"数据质量={data_quality}",
+            0.9 if data_points_count >= 60 else 0.5,
+        )
+        plan.mark_step_completed("validate_data")
+
+        # 步骤2：指标计算
+        plan.mark_step_executing("compute_indicators")
+        self._update_status("analyzing", "正在计算技术指标")
         df = self._prepare_data(stock_data).copy()
-        
-        # 计算所有技术指标
         indicators = self._calculate_all_indicators(df)
-        
-        # 识别所有形态
+        self._add_reasoning_step(
+            "指标计算",
+            "计算12项技术指标（MA/MACD/RSI/KDJ/BOLL/ATR/OBV/WR/CCI/ADX/成交量/量价）",
+            f"数据范围={df['date'].iloc[0]}~{df['date'].iloc[-1]}",
+            f"RSI={indicators.get('rsi', {}).get('value', 'N/A')}, "
+            f"MACD={indicators.get('macd', {}).get('cross_signal', 'N/A')}",
+            0.85,
+        )
+        plan.mark_step_completed("compute_indicators")
+
+        # 步骤3：形态识别与趋势分析
+        plan.mark_step_executing("generate_signal")
+        self._update_status("analyzing", "正在识别K线形态和分析趋势")
         patterns = self._identify_all_patterns(df, indicators)
-        
-        # 分析趋势
         trend, trend_strength = self._analyze_trend(df, indicators)
-        
-        # 计算支撑阻力位
         support_levels, resistance_levels = self._calculate_support_resistance(df)
-        
-        # 生成综合信号
         signal, confidence = self._generate_comprehensive_signal(df, indicators, trend, patterns)
+        self._add_reasoning_step(
+            "信号生成",
+            f"综合{len(patterns)}个形态和趋势分析生成信号",
+            f"趋势={trend}, 形态数={len(patterns)}",
+            f"信号={signal.value}, 置信度={confidence}%",
+            confidence / 100.0,
+        )
+        plan.mark_step_completed("generate_signal")
 
         # 生成分析摘要
         summary = self._generate_summary(
             stock_data, trend, indicators, patterns, signal
         )
 
-        # 确保所有numpy类型转为Python原生类型（避免Pydantic序列化失败）
+        # 确保所有numpy类型转为Python原生类型
         indicators = self._sanitize_numpy(indicators)
         support_levels = [float(x) for x in support_levels]
         resistance_levels = [float(x) for x in resistance_levels]
         trend_strength = int(trend_strength)
         confidence = int(confidence)
 
-        # LLM增强分析：基于已计算的技术指标进行深度解读
+        # LLM增强分析
         if self.llm:
             try:
+                self._update_status("analyzing", "正在使用LLM深度解读")
                 llm_insight = self._llm_enhance_analysis(
                     stock_data, trend, indicators, patterns, signal
                 )
@@ -97,6 +136,31 @@ class TechnicalAnalyst(BaseAgent):
                     summary = llm_insight["summary"]
             except Exception as e:
                 logger.warning(f"[{self.name}] LLM增强分析失败，使用规则引擎结果: {e}")
+
+        # 步骤4：反思自检
+        plan.mark_step_executing("validate_output")
+        reflection = self._reflect_on_output({
+            "signal": signal,
+            "confidence": confidence,
+            "indicators": indicators,
+            "data_points_count": data_points_count,
+        })
+
+        # 根据反思结果调整置信度
+        if reflection.get("confidence_adjustment", 0) != 0:
+            original_confidence = confidence
+            confidence = max(5, min(100, confidence + reflection["confidence_adjustment"]))
+            if confidence != original_confidence:
+                logger.info(
+                    f"[{self.name}] 反思调整置信度: {original_confidence}% -> {confidence}%"
+                )
+
+        # 生成不确定性声明
+        uncertainty = self._generate_uncertainty_statement(confidence, data_quality)
+        if uncertainty:
+            summary += f"\n\n{uncertainty}"
+
+        plan.mark_step_completed("validate_output")
 
         analysis = TechnicalAnalysis(
             trend=trend,
@@ -107,9 +171,14 @@ class TechnicalAnalyst(BaseAgent):
             patterns=patterns,
             summary=summary,
             signal=signal,
-            confidence=confidence
+            confidence=confidence,
+            reasoning_chain=self.get_reasoning_chain(),
+            uncertainty_statement=uncertainty if uncertainty else None,
+            reflection=reflection,
+            task_plan=self.get_task_plan(),
         )
-        
+
+        self._update_status("completed", f"技术分析完成: {signal.value}")
         self.log_analysis(analysis.model_dump())
         return analysis
     

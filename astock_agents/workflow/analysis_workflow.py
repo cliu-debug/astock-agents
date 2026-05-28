@@ -9,7 +9,7 @@
 """
 
 import json
-from typing import Dict, Any, Optional, TypedDict, Annotated, List
+from typing import Dict, Any, Optional, TypedDict, Annotated, List, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -137,6 +137,9 @@ class AnalysisWorkflow:
                 if hasattr(agent, "mcp_server"):
                     agent.mcp_server = self.mcp_server
 
+        # 状态回调（用于WebSocket实时推送）
+        self._status_callback: Optional[Callable] = None
+
         # 并行执行线程池
         self._executor = ThreadPoolExecutor(max_workers=4)
 
@@ -170,6 +173,24 @@ class AnalysisWorkflow:
         workflow.set_entry_point("fetch_data")
 
         return workflow.compile()
+
+    def set_status_callback(
+        self, callback: Callable[[str, str, str], None]
+    ) -> None:
+        """设置状态回调函数，注入到所有智能体
+
+        Args:
+            callback: 回调函数，参数为 (agent_name, status, message)
+        """
+        self._status_callback = callback
+        for agent in [
+            self.technical_analyst, self.fundamental_analyst,
+            self.sentiment_analyst, self.news_analyst,
+            self.bull_researcher, self.bear_researcher,
+            self.trader, self.risk_manager,
+        ]:
+            if hasattr(agent, "set_status_callback"):
+                agent.set_status_callback(callback)
 
     def _fetch_data_node(self, state: WorkflowState) -> WorkflowState:
         """数据获取节点"""

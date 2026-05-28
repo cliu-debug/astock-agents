@@ -26,23 +26,29 @@ class TechnicalAnalysis(BaseModel):
     """技术分析结果"""
     trend: str = Field(..., description="趋势判断: 上升/下降/震荡")
     trend_strength: int = Field(..., ge=0, le=100, description="趋势强度 0-100")
-    
+
     # 关键价格
     support_levels: List[float] = Field(default_factory=list, description="支撑位")
     resistance_levels: List[float] = Field(default_factory=list, description="阻力位")
-    
+
     # 技术指标解读
     indicators: Dict[str, Any] = Field(default_factory=dict, description="技术指标数据")
-    
+
     # 形态识别
     patterns: List[str] = Field(default_factory=list, description="识别出的K线形态")
-    
+
     # 分析摘要
     summary: str = Field(..., description="技术分析总结")
-    
+
     # 信号
     signal: Signal = Field(..., description="技术信号")
     confidence: int = Field(..., ge=0, le=100, description="置信度")
+
+    # 可解释性增强字段
+    reasoning_chain: List[Dict[str, Any]] = Field(default_factory=list, description="推理链步骤")
+    uncertainty_statement: Optional[str] = Field(default=None, description="不确定性声明")
+    reflection: Optional[Dict[str, Any]] = Field(default=None, description="反思自检结果")
+    task_plan: Optional[Dict[str, Any]] = Field(default=None, description="任务计划")
 
 
 class FundamentalAnalysis(BaseModel):

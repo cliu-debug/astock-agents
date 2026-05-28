@@ -263,6 +263,34 @@ async def analyze_stock(request: Request, body: AnalysisRequest):
     import time as _time
     _start_time = _time.time()
 
+    # 设置智能体状态回调，实时推送到WebSocket
+    try:
+        from astock_agents.web.websocket import get_connection_manager
+        _ws_manager = get_connection_manager()
+
+        def _agent_status_callback(agent_name: str, status: str, message: str):
+            """智能体状态回调 - 实时推送到所有WebSocket客户端"""
+            try:
+                import asyncio as _asyncio
+                loop = _asyncio.get_event_loop()
+                if loop.is_running():
+                    _asyncio.ensure_future(
+                        _ws_manager.broadcast({
+                            "type": "agent_status",
+                            "agent": agent_name,
+                            "status": status,
+                            "message": message,
+                            "stock_code": validated_code,
+                            "timestamp": _time.time(),
+                        })
+                    )
+            except Exception:
+                pass
+
+        workflow.set_status_callback(_agent_status_callback)
+    except Exception:
+        pass
+
     try:
         # 在线程池中执行同步的工作流分析，避免阻塞事件循环
         loop = asyncio.get_event_loop()

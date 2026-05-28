@@ -1,12 +1,119 @@
-"""智能体基类"""
+"""智能体基类
+
+核心特征：
+- 反思能力(Reflection)：智能体可自检输出质量，发现逻辑漏洞
+- 可解释性(Explainability)：输出推理链、置信度、不确定声明
+- 自主规划(Autonomous Planning)：动态任务分解与执行
+- 工具使用(Tool Use)：通过MCP协议调用标准化金融工具
+- 状态回调(Status Callback)：实时推送工作状态
+"""
 
 import json
+import time
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 from datetime import datetime
 from loguru import logger
 
 from astock_agents.models import StockData
+
+
+class AgentStatus:
+    """智能体工作状态常量"""
+    IDLE = "idle"
+    PLANNING = "planning"
+    EXECUTING = "executing"
+    ANALYZING = "analyzing"
+    REFLECTING = "reflecting"
+    COMPLETED = "completed"
+    ERROR = "error"
+
+
+class ReasoningStep:
+    """推理链步骤"""
+
+    def __init__(
+        self,
+        step_name: str,
+        description: str,
+        data_used: str,
+        conclusion: str,
+        confidence: float,
+    ):
+        self.step_name = step_name
+        self.description = description
+        self.data_used = data_used
+        self.conclusion = conclusion
+        self.confidence = confidence
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "step_name": self.step_name,
+            "description": self.description,
+            "data_used": self.data_used,
+            "conclusion": self.conclusion,
+            "confidence": self.confidence,
+        }
+
+
+class TaskPlan:
+    """任务计划 - 自主规划能力的数据结构"""
+
+    def __init__(self, goal: str):
+        self.goal = goal
+        self.steps: List[Dict[str, Any]] = []
+        self.completed_steps: List[str] = []
+        self.current_step: Optional[str] = None
+
+    def add_step(
+        self,
+        step_id: str,
+        name: str,
+        description: str,
+        dependencies: Optional[List[str]] = None,
+        tools_needed: Optional[List[str]] = None,
+    ) -> None:
+        self.steps.append({
+            "step_id": step_id,
+            "name": name,
+            "description": description,
+            "dependencies": dependencies or [],
+            "tools_needed": tools_needed or [],
+            "status": "pending",
+        })
+
+    def get_next_step(self) -> Optional[Dict[str, Any]]:
+        for step in self.steps:
+            if step["status"] == "pending":
+                deps_met = all(
+                    dep in self.completed_steps
+                    for dep in step["dependencies"]
+                )
+                if deps_met:
+                    return step
+        return None
+
+    def mark_step_completed(self, step_id: str) -> None:
+        for step in self.steps:
+            if step["step_id"] == step_id:
+                step["status"] = "completed"
+                self.completed_steps.append(step_id)
+                break
+
+    def mark_step_executing(self, step_id: str) -> None:
+        for step in self.steps:
+            if step["step_id"] == step_id:
+                step["status"] = "executing"
+                self.current_step = step_id
+                break
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "goal": self.goal,
+            "steps": self.steps,
+            "completed_steps": self.completed_steps,
+            "current_step": self.current_step,
+        }
 
 
 class BaseAgent(ABC):
@@ -19,24 +126,294 @@ class BaseAgent(ABC):
         llm: Optional[Any] = None,
         config: Optional[Dict[str, Any]] = None
     ):
-        """
-        初始化智能体
-
-        Args:
-            name: 智能体名称
-            role: 角色描述
-            llm: 语言模型实例（可选）
-            config: 配置字典
-        """
         self.name = name
         self.role = role
         self.config = config or {}
-        # 如果未传入LLM，尝试从配置创建
         self.llm = llm or self._create_default_llm()
-        # MCP服务实例（由工作流注入）
         self.mcp_server: Optional[Any] = None
 
+        # 工作状态
+        self._status: str = AgentStatus.IDLE
+        self._status_message: str = ""
+        self._status_callback: Optional[Callable[[str, str, str], None]] = None
+
+        # 推理链
+        self._reasoning_chain: List[ReasoningStep] = []
+
+        # 任务计划
+        self._task_plan: Optional[TaskPlan] = None
+
+        # 反思结果
+        self._reflection: Optional[Dict[str, Any]] = None
+
         logger.info(f"智能体初始化: {name} ({role})")
+
+    # ==================== 状态管理 ====================
+
+    @property
+    def status(self) -> str:
+        return self._status
+
+    def set_status_callback(
+        self, callback: Callable[[str, str, str], None]
+    ) -> None:
+        """设置状态回调函数
+
+        Args:
+            callback: 回调函数，参数为 (agent_name, status, message)
+        """
+        self._status_callback = callback
+
+    def _update_status(self, status: str, message: str = "") -> None:
+        """更新智能体工作状态
+
+        Args:
+            status: 状态常量
+            message: 状态描述信息
+        """
+        self._status = status
+        self._status_message = message
+        if self._status_callback:
+            try:
+                self._status_callback(self.name, status, message)
+            except Exception as e:
+                logger.debug(f"[{self.name}] 状态回调失败: {e}")
+
+    # ==================== 推理链 ====================
+
+    def _add_reasoning_step(
+        self,
+        step_name: str,
+        description: str,
+        data_used: str,
+        conclusion: str,
+        confidence: float,
+    ) -> None:
+        """添加推理链步骤
+
+        Args:
+            step_name: 步骤名称
+            description: 步骤描述
+            data_used: 使用的数据
+            conclusion: 得出的结论
+            confidence: 置信度(0-1)
+        """
+        step = ReasoningStep(
+            step_name=step_name,
+            description=description,
+            data_used=data_used,
+            conclusion=conclusion,
+            confidence=confidence,
+        )
+        self._reasoning_chain.append(step)
+
+    def _clear_reasoning_chain(self) -> None:
+        """清空推理链"""
+        self._reasoning_chain = []
+
+    def get_reasoning_chain(self) -> List[Dict[str, Any]]:
+        """获取推理链
+
+        Returns:
+            推理链步骤列表
+        """
+        return [step.to_dict() for step in self._reasoning_chain]
+
+    # ==================== 自主规划 ====================
+
+    def _create_task_plan(self, goal: str) -> TaskPlan:
+        """创建任务计划
+
+        Args:
+            goal: 任务目标
+
+        Returns:
+            TaskPlan实例
+        """
+        self._task_plan = TaskPlan(goal)
+        return self._task_plan
+
+    def _plan_analysis_tasks(self, stock_data: StockData) -> TaskPlan:
+        """规划分析任务（子类可重写以自定义任务分解）
+
+        默认规划：数据校验 -> 指标计算 -> 信号生成 -> 结果校验
+
+        Args:
+            stock_data: 股票数据
+
+        Returns:
+            任务计划
+        """
+        plan = self._create_task_plan(
+            f"分析{stock_data.stock_name}({stock_data.stock_code})"
+        )
+        plan.add_step(
+            "validate_data", "数据校验",
+            "检查输入数据完整性和质量",
+            tools_needed=["get_stock_price"],
+        )
+        plan.add_step(
+            "compute_indicators", "指标计算",
+            "计算分析所需的技术/基本面/情绪指标",
+            dependencies=["validate_data"],
+        )
+        plan.add_step(
+            "generate_signal", "信号生成",
+            "基于指标生成交易信号",
+            dependencies=["compute_indicators"],
+        )
+        plan.add_step(
+            "validate_output", "结果校验",
+            "自检输出质量，确保逻辑一致性",
+            dependencies=["generate_signal"],
+        )
+        return plan
+
+    def get_task_plan(self) -> Optional[Dict[str, Any]]:
+        """获取当前任务计划
+
+        Returns:
+            任务计划字典
+        """
+        if self._task_plan:
+            return self._task_plan.to_dict()
+        return None
+
+    # ==================== 反思能力 ====================
+
+    def _reflect_on_output(
+        self,
+        analysis_result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """对分析结果进行反思自检
+
+        检查项：
+        1. 逻辑一致性：信号是否与指标矛盾
+        2. 置信度合理性：置信度是否过高/过低
+        3. 数据充分性：是否有足够数据支撑结论
+        4. 遗漏风险：是否遗漏了重要因素
+
+        Args:
+            analysis_result: 分析结果字典
+
+        Returns:
+            反思结果字典
+        """
+        self._update_status(AgentStatus.REFLECTING, "正在自检输出质量")
+
+        reflection: Dict[str, Any] = {
+            "agent_name": self.name,
+            "timestamp": datetime.now().isoformat(),
+            "issues_found": [],
+            "confidence_adjustment": 0,
+            "quality_score": 100,
+            "recommendation": "",
+        }
+
+        confidence = analysis_result.get("confidence", 50)
+        if confidence > 90:
+            reflection["issues_found"].append(
+                f"置信度{confidence}%过高，可能存在过度自信偏差"
+            )
+            reflection["confidence_adjustment"] = -5
+            reflection["quality_score"] -= 10
+        elif confidence < 20:
+            reflection["issues_found"].append(
+                f"置信度{confidence}%过低，数据可能不充分"
+            )
+            reflection["quality_score"] -= 15
+
+        signal = analysis_result.get("signal", "")
+        signal_str = signal.value if hasattr(signal, "value") else str(signal)
+        indicators = analysis_result.get("indicators", {})
+
+        if signal_str in ("强烈买入", "买入") and indicators:
+            rsi = indicators.get("rsi", {}).get("value", 50)
+            if rsi > 70:
+                reflection["issues_found"].append(
+                    f"买入信号但RSI={rsi}超买，存在矛盾"
+                )
+                reflection["confidence_adjustment"] -= 10
+                reflection["quality_score"] -= 15
+
+        if signal_str in ("强烈卖出", "卖出") and indicators:
+            rsi = indicators.get("rsi", {}).get("value", 50)
+            if rsi < 30:
+                reflection["issues_found"].append(
+                    f"卖出信号但RSI={rsi}超卖，存在矛盾"
+                )
+                reflection["confidence_adjustment"] -= 10
+                reflection["quality_score"] -= 15
+
+        data_points = analysis_result.get("data_points_count", 0)
+        if data_points < 30:
+            reflection["issues_found"].append(
+                f"数据量不足({data_points}天)，短期指标可能不可靠"
+            )
+            reflection["confidence_adjustment"] -= 10
+            reflection["quality_score"] -= 20
+
+        if self.llm is None:
+            reflection["issues_found"].append(
+                "LLM未启用，分析仅基于规则引擎，深度有限"
+            )
+            reflection["quality_score"] -= 10
+
+        if reflection["quality_score"] >= 80:
+            reflection["recommendation"] = "分析质量良好，结论可信"
+        elif reflection["quality_score"] >= 60:
+            reflection["recommendation"] = "分析质量一般，建议结合其他维度确认"
+        else:
+            reflection["recommendation"] = "分析质量较低，建议人工复核"
+
+        self._reflection = reflection
+        logger.info(
+            f"[{self.name}] 反思完成: 质量评分={reflection['quality_score']}, "
+            f"发现问题={len(reflection['issues_found'])}个"
+        )
+
+        return reflection
+
+    def get_reflection(self) -> Optional[Dict[str, Any]]:
+        """获取反思结果"""
+        return self._reflection
+
+    # ==================== 不确定性声明 ====================
+
+    def _generate_uncertainty_statement(
+        self,
+        confidence: int,
+        data_quality: str = "normal",
+    ) -> str:
+        """生成不确定性声明
+
+        当置信度较低或数据质量不佳时，明确声明不确定性
+
+        Args:
+            confidence: 置信度(0-100)
+            data_quality: 数据质量 (good/normal/poor/insufficient)
+
+        Returns:
+            不确定性声明文本
+        """
+        statements = []
+
+        if confidence < 30:
+            statements.append("⚠️ 本结论置信度较低，建议谨慎参考")
+        elif confidence < 50:
+            statements.append("⚡ 本结论置信度一般，建议结合其他信息确认")
+
+        if data_quality == "poor":
+            statements.append("📊 数据质量较差，部分指标可能不准确")
+        elif data_quality == "insufficient":
+            statements.append("📊 数据量不足，短期指标可靠性有限")
+
+        if self.llm is None:
+            statements.append("🤖 LLM未启用，本分析仅基于规则引擎")
+
+        return " | ".join(statements) if statements else ""
+
+    # ==================== LLM相关 ====================
 
     def _create_default_llm(self) -> Optional[Any]:
         """创建默认LLM（如果配置了API密钥）
