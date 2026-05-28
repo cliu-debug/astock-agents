@@ -1016,6 +1016,135 @@ async def notification_test(request: Request):
     return {"success": success, "message": "测试通知已发送" if success else "测试通知发送失败"}
 
 
+# ==================== 多轮对话 ====================
+
+class DialogueRequest(BaseModel):
+    """对话请求"""
+    question: str = Field(..., description="用户提问")
+    session_id: str = Field(default="default", description="会话ID")
+    stock_code: Optional[str] = Field(default=None, description="股票代码")
+
+
+@app.post("/api/dialogue/ask")
+async def dialogue_ask(request: DialogueRequest):
+    """多轮对话 - 用户追问
+
+    支持的意图：
+    - why_signal: 为什么买入/卖出？
+    - risk_detail: 风险在哪？
+    - compare: 对比分析
+    - deep_dive: 详细分析
+    - challenge: 我不同意
+    - follow_up: 接下来怎么办？
+    """
+    try:
+        from astock_agents.services.dialogue_service import DialogueService
+        service = DialogueService()
+
+        context = service.get_context(
+            session_id=request.session_id,
+            stock_code=request.stock_code,
+        )
+
+        analysis_result = None
+        if request.stock_code:
+            try:
+                records = Database().get_analysis_results(
+                    stock_code=request.stock_code, limit=1
+                )
+                if records:
+                    report_json = records[0].get("report_json", "{}")
+                    analysis_result = json.loads(report_json) if isinstance(report_json, str) else report_json
+            except Exception:
+                pass
+
+        response = service.generate_response(
+            question=request.question,
+            context=context,
+            analysis_result=analysis_result,
+        )
+
+        return response
+
+    except Exception as e:
+        logger.error(f"[对话] 处理失败: {e}")
+        return {"error": str(e), "question": request.question, "answer": "对话处理失败，请稍后重试"}
+
+
+@app.get("/api/dialogue/history/{session_id}")
+async def dialogue_history(session_id: str, limit: int = 20):
+    """获取对话历史"""
+    try:
+        db = Database()
+        history = db.get_dialogue_history(session_id=session_id, limit=limit)
+        return {"session_id": session_id, "history": history, "count": len(history)}
+    except Exception as e:
+        return {"error": str(e), "history": []}
+
+
+# ==================== 持续学习（反馈） ====================
+
+class FeedbackRequest(BaseModel):
+    """反馈请求"""
+    stock_code: str = Field(..., description="股票代码")
+    signal: str = Field(..., description="当时的信号")
+    feedback_type: str = Field(..., description="反馈类型: agree/disagree/neutral")
+    feedback_text: str = Field(default="", description="反馈文本")
+    actual_outcome: str = Field(default="", description="实际结果")
+    user_id: str = Field(default="default", description="用户ID")
+
+
+@app.post("/api/feedback")
+async def submit_feedback(request: FeedbackRequest):
+    """提交用户反馈 - 用于持续学习
+
+    用户对分析结果的评价会被记录，系统据此调整策略参数：
+    - agree: 信号准确，提升该信号权重
+    - disagree: 信号不准确，降低该信号权重
+    - neutral: 中立，不调整
+    """
+    try:
+        from astock_agents.services.continual_learning import ContinualLearningService
+        service = ContinualLearningService()
+
+        result = service.record_feedback(
+            user_id=request.user_id,
+            stock_code=request.stock_code,
+            signal=request.signal,
+            feedback_type=request.feedback_type,
+            feedback_text=request.feedback_text,
+            actual_outcome=request.actual_outcome,
+        )
+
+        return result
+
+    except Exception as e:
+        logger.error(f"[反馈] 处理失败: {e}")
+        return {"error": str(e), "feedback_recorded": False}
+
+
+@app.get("/api/learning/state")
+async def learning_state(user_id: str = "default"):
+    """获取持续学习状态"""
+    try:
+        from astock_agents.services.continual_learning import ContinualLearningService
+        service = ContinualLearningService()
+        return service.get_learning_state(user_id)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/learning/weights")
+async def learning_weights(user_id: str = "default"):
+    """获取调整后的分析维度权重"""
+    try:
+        from astock_agents.services.continual_learning import ContinualLearningService
+        service = ContinualLearningService()
+        return {"user_id": user_id, "weights": service.get_adjusted_weights(user_id)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # ==================== WebSocket实时推送 ====================
 
 from fastapi import WebSocket, WebSocketDisconnect

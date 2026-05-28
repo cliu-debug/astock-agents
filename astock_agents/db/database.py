@@ -158,6 +158,32 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS idx_debate_history_stock ON debate_history(stock_code);
                 CREATE INDEX IF NOT EXISTS idx_debate_history_time ON debate_history(created_at);
+
+                CREATE TABLE IF NOT EXISTS dialogue_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    stock_code TEXT DEFAULT '',
+                    question TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    intent TEXT DEFAULT 'general',
+                    target_agent TEXT DEFAULT 'trader',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_dialogue_session ON dialogue_history(session_id);
+                CREATE INDEX IF NOT EXISTS idx_dialogue_time ON dialogue_history(created_at);
+
+                CREATE TABLE IF NOT EXISTS feedback_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    stock_code TEXT NOT NULL,
+                    signal TEXT NOT NULL,
+                    feedback_type TEXT NOT NULL,
+                    feedback_text TEXT DEFAULT '',
+                    actual_outcome TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback_records(user_id);
+                CREATE INDEX IF NOT EXISTS idx_feedback_stock ON feedback_records(stock_code);
             """)
             conn.commit()
         finally:
@@ -209,6 +235,195 @@ class Database:
                 (stock_code, limit),
             ).fetchall()
             return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    # ---- 对话历史 ----
+
+    def save_dialogue_history(
+        self,
+        session_id: str,
+        question: str,
+        answer: str,
+        intent: str = "general",
+        target_agent: str = "trader",
+        stock_code: str = "",
+    ) -> int:
+        """保存对话历史
+
+        Args:
+            session_id: 会话ID
+            question: 用户提问
+            answer: 系统回答
+            intent: 意图
+            target_agent: 目标智能体
+            stock_code: 股票代码
+
+        Returns:
+            插入记录的ID
+        """
+        conn = self._get_conn()
+        try:
+            cursor = conn.execute(
+                """INSERT INTO dialogue_history
+                (session_id, stock_code, question, answer, intent, target_agent)
+                VALUES (?,?,?,?,?,?)""",
+                (session_id, stock_code, question, answer, intent, target_agent),
+            )
+            conn.commit()
+            return cursor.lastrowid or 0
+        finally:
+            conn.close()
+
+    def get_dialogue_history(
+        self,
+        session_id: str,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """获取对话历史
+
+        Args:
+            session_id: 会话ID
+            limit: 返回条数上限
+
+        Returns:
+            对话历史字典列表，按时间倒序
+        """
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM dialogue_history WHERE session_id=? ORDER BY created_at DESC LIMIT ?",
+                (session_id, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    # ---- 反馈记录 ----
+
+    def save_feedback(
+        self,
+        user_id: str,
+        stock_code: str,
+        signal: str,
+        feedback_type: str,
+        feedback_text: str = "",
+        actual_outcome: str = "",
+    ) -> int:
+        """保存用户反馈
+
+        Args:
+            user_id: 用户ID
+            stock_code: 股票代码
+            signal: 当时的信号
+            feedback_type: 反馈类型(agree/disagree/neutral)
+            feedback_text: 反馈文本
+            actual_outcome: 实际结果
+
+        Returns:
+            插入记录的ID
+        """
+        conn = self._get_conn()
+        try:
+            cursor = conn.execute(
+                """INSERT INTO feedback_records
+                (user_id, stock_code, signal, feedback_type, feedback_text, actual_outcome)
+                VALUES (?,?,?,?,?,?)""",
+                (user_id, stock_code, signal, feedback_type, feedback_text, actual_outcome),
+            )
+            conn.commit()
+            return cursor.lastrowid or 0
+        finally:
+            conn.close()
+
+    def get_feedback_history(
+        self,
+        user_id: str,
+        stock_code: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """获取反馈历史
+
+        Args:
+            user_id: 用户ID
+            stock_code: 股票代码（可选）
+            limit: 返回条数上限
+
+        Returns:
+            反馈记录字典列表
+        """
+        conn = self._get_conn()
+        try:
+            if stock_code:
+                rows = conn.execute(
+                    "SELECT * FROM feedback_records WHERE user_id=? AND stock_code=? ORDER BY created_at DESC LIMIT ?",
+                    (user_id, stock_code, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM feedback_records WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+                    (user_id, limit),
+                ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_feedback_stats(self, user_id: str) -> Dict[str, Any]:
+        """获取反馈统计（用于持续学习）
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            反馈统计字典
+        """
+        conn = self._get_conn()
+        try:
+            total = conn.execute(
+                "SELECT COUNT(*) as cnt FROM feedback_records WHERE user_id=?",
+                (user_id,),
+            ).fetchone()
+
+            agree = conn.execute(
+                "SELECT COUNT(*) as cnt FROM feedback_records WHERE user_id=? AND feedback_type='agree'",
+                (user_id,),
+            ).fetchone()
+
+            disagree = conn.execute(
+                "SELECT COUNT(*) as cnt FROM feedback_records WHERE user_id=? AND feedback_type='disagree'",
+                (user_id,),
+            ).fetchone()
+
+            signal_accuracy = conn.execute(
+                """SELECT signal, feedback_type, COUNT(*) as cnt
+                FROM feedback_records WHERE user_id=?
+                GROUP BY signal, feedback_type""",
+                (user_id,),
+            ).fetchall()
+
+            total_cnt = dict(total).get("cnt", 0) if total else 0
+            agree_cnt = dict(agree).get("cnt", 0) if agree else 0
+            disagree_cnt = dict(disagree).get("cnt", 0) if disagree else 0
+
+            accuracy = agree_cnt / max(total_cnt, 1) * 100
+
+            signal_stats = {}
+            for row in signal_accuracy:
+                r = dict(row)
+                sig = r.get("signal", "unknown")
+                fb = r.get("feedback_type", "unknown")
+                cnt = r.get("cnt", 0)
+                if sig not in signal_stats:
+                    signal_stats[sig] = {}
+                signal_stats[sig][fb] = cnt
+
+            return {
+                "total_feedbacks": total_cnt,
+                "agree_count": agree_cnt,
+                "disagree_count": disagree_cnt,
+                "accuracy_rate": round(accuracy, 1),
+                "signal_accuracy": signal_stats,
+            }
         finally:
             conn.close()
 
