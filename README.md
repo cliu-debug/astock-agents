@@ -3,8 +3,8 @@
 <div align="center">
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/yourusername/astock-agents?style=social)](https://github.com/yourusername/astock-agents)
+[![License](https://img.shields.io/badge/License-CC%20BY--NC%204.0-blue)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/astock-agents/astock-agents?style=social)](https://github.com/astock-agents/astock-agents)
 
 **多智能体协同股票分析系统**
 
@@ -67,7 +67,7 @@ AStockAgents 是一个面向A股市场的智能分析系统，采用多智能体
 
 ```bash
 # 克隆项目
-git clone https://github.com/yourusername/astock-agents.git
+git clone https://github.com/astock-agents/astock-agents.git
 cd astock-agents
 
 # 安装依赖

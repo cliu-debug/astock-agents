@@ -1,87 +1,29 @@
-# AStockAgents 商业授权协议
+Creative Commons Attribution-NonCommercial 4.0 International
 
-版权所有 © 2026 AStockAgents
+Copyright (c) 2026 AStockAgents
 
-## 许可证声明
-
-本软件（包括但不限于源代码、文档、模型、算法、数据结构及相关文件）受知识产权法保护。
-
-### 个人学习研究使用
-
-- ✅ 个人学习者可以免费使用本项目进行学习研究
-- ✅ 学术机构可用于教学和研究目的
-- ✅ 禁止将本项目用于任何商业目的
-
-### 商业使用
-
-- ❌ 未经授权，禁止将本项目用于任何商业目的
-- ❌ 禁止将本项目集成到商业产品或服务中
-- ❌ 禁止对本项目进行二次开发后用于商业用途
-- ❌ 禁止通过本项目获利
-
-### 授权联系
-
-如需商业授权，请联系项目作者：
-
-- 联系方式：请通过 GitHub Issues 联系
-
-## 限制与禁止
-
-1. **禁止商用**: 禁止将本软件用于任何形式的商业活动
-2. **禁止分发**: 禁止未经授权分发或传播本软件
-3. **禁止修改**: 禁止修改本软件并声称拥有所有权
-4. **禁止逆向**: 禁止对本软件进行反编译或逆向工程
-
-## 免责声明
-
-本软件仅供学习研究使用，不构成任何投资建议。股市有风险，投资需谨慎。使用本软件进行投资决策造成的任何损失，作者不承担任何责任。
-
-## 法律适用
-
-本协议受中华人民共和国知识产权法管辖。如有任何争议，将通过友好协商解决；协商不成的，将提交有管辖权的人民法院处理。
+This work is licensed under the Creative Commons Attribution-NonCommercial 4.0
+International License. You should have received a copy of the license along with
+this work. If not, see https://creativecommons.org/licenses/by-nc/4.0/.
 
 ---
 
-## 英文版本（English Version）
+AStockAgents - Multi-Agent Collaborative Stock Analysis System
 
-# AStockAgents Commercial License Agreement
+Permissions:
+  - Personal use, study, and research
+  - Modification for personal/non-commercial purposes
+  - Distribution of the original or modified work under the same license
 
-Copyright © 2026 AStockAgents
+Restrictions:
+  - Commercial use is NOT permitted without explicit written permission
+  - You may NOT use this software for commercial trading services,
+    SaaS products, or any revenue-generating activities
+  - You must give appropriate credit and indicate if changes were made
 
-## License Statement
+Disclaimer:
+  This software is provided "as is" without warranty of any kind.
+  The analysis results are for reference only and do not constitute
+  investment advice. Stock market involves risk; invest with caution.
 
-This software (including but not limited to source code, documents, models, algorithms, data structures and related files) is protected by intellectual property laws.
-
-### Personal Learning and Research Use
-
-- ✅ Free for personal learners to use for learning and research
-- ✅ Available for academic institutions for teaching and research purposes
-- ❌ Prohibited from using this project for any commercial purposes
-
-### Commercial Use
-
-- ❌ Prohibited from using this project for any commercial purposes without authorization
-- ❌ Prohibited from integrating this project into commercial products or services
-- ❌ Prohibited from二次开发 this project for commercial purposes
-- ❌ Prohibited from profiting through this project
-
-### Contact for Licensing
-
-For commercial licensing, please contact the project author:
-
-- Contact: Please contact via GitHub Issues
-
-## Restrictions
-
-1. **No Commercial Use**: Prohibited from using this software for any commercial activities
-2. **No Distribution**: Prohibited from distributing or disseminating this software without authorization
-3. **No Modification**: Prohibited from modifying this software and claiming ownership
-4. **No Reverse Engineering**: Prohibited from decompiling or reverse engineering this software
-
-## Disclaimer
-
-This software is provided for learning and research purposes only and does not constitute any investment advice. Stock markets involve risks, and investment needs to be cautious. The author shall not be liable for any losses incurred from investment decisions made using this software.
-
-## Governing Law
-
-This agreement is governed by the People's Republic of China Intellectual Property Law. Any disputes shall be resolved through friendly negotiation; if negotiation fails, they shall be submitted to the people's court with jurisdiction.
+To obtain a commercial license, please contact the project maintainer.

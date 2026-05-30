@@ -71,7 +71,7 @@
 #### 2. 克隆项目
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/astock-agents.git
+git clone https://github.com/astock-agents/astock-agents.git
 cd astock-agents
 ```
 

@@ -4,15 +4,18 @@ import os
 import time
 from typing import Optional
 
+from loguru import logger
 from fastapi import Request, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 import jwt
 
 # JWT配置
-JWT_SECRET: str = os.environ.get(
-    "JWT_SECRET", "astock-agents-secret-key-change-in-production"
-)
+JWT_SECRET: str = os.environ.get("JWT_SECRET", "")
+if not JWT_SECRET:
+    import secrets
+    JWT_SECRET = secrets.token_hex(32)
+    logger.warning("[安全] JWT_SECRET 未设置，已自动生成临时密钥。生产环境请设置环境变量 JWT_SECRET")
 JWT_ALGORITHM: str = "HS256"
 JWT_EXPIRE_HOURS: int = 24
 

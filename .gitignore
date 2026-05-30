@@ -39,6 +39,12 @@ env/
 # Environment variables
 .env
 .env.local
+.env.production
+*.pem
+*.key
+
+# AI IDE rules
+.trae/
 
 # Config files with secrets
 config.yaml

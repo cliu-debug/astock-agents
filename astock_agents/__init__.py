@@ -5,8 +5,8 @@ A multi-agent LLM framework for A-share stock investment research.
 """
 
 __version__ = "0.1.0"
-__author__ = "Your Name"
-__email__ = "your.email@example.com"
+__author__ = "AStockAgents"
+__email__ = "astock-agents@proton.me"
 
 # 延迟导入，避免循环依赖
 # from astock_agents.workflow import AnalysisWorkflow
