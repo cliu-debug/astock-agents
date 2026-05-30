@@ -498,6 +498,26 @@ class BaseAgent(ABC):
                     api_key=api_key,
                     base_url="https://open.bigmodel.cn/api/paas/v4/",
                 )
+            elif provider == "openrouter":
+                api_key = llm_config.get("openrouter", {}).get("api_key", "")
+                if not api_key:
+                    logger.warning(f"[{self.name}] 未配置OpenRouter API密钥，尝试降级到Ollama本地模型")
+                    return self._try_ollama_fallback()
+
+                from langchain_openai import ChatOpenAI
+                model = llm_config.get("openrouter", {}).get("model", "google/gemma-4-31b-it:free")
+                base_url = llm_config.get("openrouter", {}).get("base_url", "https://openrouter.ai/api/v1")
+                logger.info(f"[{self.name}] 使用OpenRouter模型: {model}")
+                return ChatOpenAI(
+                    model=model,
+                    temperature=llm_config.get("openrouter", {}).get("temperature", 0.3),
+                    api_key=api_key,
+                    base_url=base_url,
+                    default_headers={
+                        "HTTP-Referer": "https://github.com/astock-agents",
+                        "X-Title": "AStockAgents",
+                    },
+                )
             else:
                 logger.warning(f"[{self.name}] 不支持的LLM提供商: {provider}，尝试降级到Ollama")
                 return self._try_ollama_fallback()

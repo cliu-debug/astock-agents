@@ -7,10 +7,25 @@
 - DeepSeek
 - Ollama 本地模型
 - 智谱AI (GLM)
+- OpenRouter (聚合平台，支持免费模型)
 """
 
 import os
 from typing import Dict, Any
+
+
+OPENROUTER_FREE_MODELS = [
+    "google/gemma-4-31b-it:free",
+    "nvidia/nemotron-3-nano-30b-a3b:free",
+    "openrouter/free",
+    "deepseek/deepseek-v4-flash:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "openai/gpt-oss-120b:free",
+    "qwen/qwen3-next-80b-a3b-instruct:free",
+    "moonshotai/kimi-k2.6:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+]
 
 
 def get_llm_config() -> Dict[str, Any]:
@@ -20,7 +35,7 @@ def get_llm_config() -> Dict[str, Any]:
         包含所有LLM提供商配置的字典，default_provider 指定默认提供商
     """
     return {
-        "default_provider": os.getenv("LLM_PROVIDER", "openai"),
+        "default_provider": os.getenv("LLM_PROVIDER", "openrouter"),
         "openai": {
             "api_key": os.getenv("OPENAI_API_KEY", ""),
             "model": os.getenv("OPENAI_MODEL", "gpt-4"),
@@ -50,6 +65,12 @@ def get_llm_config() -> Dict[str, Any]:
             "api_key": os.getenv("ZHIPU_API_KEY", ""),
             "model": os.getenv("ZHIPU_MODEL", "glm-4"),
             "temperature": float(os.getenv("ZHIPU_TEMPERATURE", "0.3")),
+        },
+        "openrouter": {
+            "api_key": os.getenv("OPENROUTER_API_KEY", ""),
+            "model": os.getenv("OPENROUTER_MODEL", "google/gemma-4-31b-it:free"),
+            "base_url": "https://openrouter.ai/api/v1",
+            "temperature": float(os.getenv("OPENROUTER_TEMPERATURE", "0.3")),
         },
     }
 

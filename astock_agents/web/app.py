@@ -18,6 +18,12 @@ import os
 import json
 import yaml
 import asyncio
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 from dataclasses import asdict
 from loguru import logger
 
@@ -2230,6 +2236,97 @@ async def get_disclaimer(request: Request):
     """获取免责声明文本"""
     from astock_agents.services.compliance import DISCLAIMER_TEXT
     return {"success": True, "disclaimer": DISCLAIMER_TEXT}
+
+
+# ==================== OpenRouter / LLM配置 API ====================
+
+@app.get("/api/llm/providers")
+@limiter.limit("30/minute")
+async def get_llm_providers(request: Request):
+    """获取所有LLM提供商配置状态
+
+    返回各提供商的配置状态（API Key是否已设置），不暴露Key内容。
+    """
+    from astock_agents.config import get_llm_config, mask_api_key, OPENROUTER_FREE_MODELS
+    config = get_llm_config()
+
+    providers = []
+    provider_names = ["openrouter", "openai", "anthropic", "qwen", "deepseek", "zhipu", "ollama"]
+    for name in provider_names:
+        pconfig = config.get(name, {})
+        api_key = pconfig.get("api_key", "")
+        providers.append({
+            "id": name,
+            "name": {
+                "openrouter": "OpenRouter (免费模型)",
+                "openai": "OpenAI",
+                "anthropic": "Anthropic",
+                "qwen": "通义千问",
+                "deepseek": "DeepSeek",
+                "zhipu": "智谱AI",
+                "ollama": "Ollama (本地)",
+            }.get(name, name),
+            "configured": bool(api_key) if name != "ollama" else True,
+            "model": pconfig.get("model", ""),
+            "masked_key": mask_api_key(api_key) if api_key else "未配置",
+        })
+
+    return {
+        "success": True,
+        "default_provider": config.get("default_provider", "openrouter"),
+        "providers": providers,
+        "openrouter_free_models": OPENROUTER_FREE_MODELS,
+    }
+
+
+@app.post("/api/llm/test")
+@limiter.limit("3/minute")
+async def test_llm_connection(request: Request, body: dict):
+    """测试LLM连接
+
+    尝试用指定提供商发送一个简单请求，验证API Key和模型是否可用。
+    """
+    provider = body.get("provider", "openrouter")
+    model = body.get("model")
+
+    try:
+        from astock_agents.config import get_llm_config
+        from astock_agents.agents.base_agent import BaseAgent
+
+        config = get_llm_config()
+        if model:
+            config.setdefault(provider, {})["model"] = model
+
+        agent_config = {"llm": config}
+        agent = BaseAgent(
+            name="test_agent",
+            role="测试",
+            config=agent_config,
+        )
+
+        llm = agent._init_llm()
+        if llm is None:
+            return {"success": False, "error": "LLM初始化失败，无可用的LLM提供商"}
+
+        response = llm.invoke([("human", "请回复'连接成功'四个字")])
+        content = response.content if hasattr(response, "content") else str(response)
+
+        return {
+            "success": True,
+            "provider": provider,
+            "model": model or config.get(provider, {}).get("model", "unknown"),
+            "response_preview": content[:200],
+        }
+    except Exception as e:
+        return {"success": False, "provider": provider, "error": str(e)}
+
+
+@app.get("/api/llm/openrouter/models")
+@limiter.limit("10/minute")
+async def get_openrouter_free_models(request: Request):
+    """获取OpenRouter免费模型列表"""
+    from astock_agents.config import OPENROUTER_FREE_MODELS
+    return {"success": True, "models": OPENROUTER_FREE_MODELS}
 
 
 if os.path.isdir(_FRONTEND_DIST) and not os.environ.get("ASTOCK_DEV_MODE"):
