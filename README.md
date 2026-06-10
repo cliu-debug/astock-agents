@@ -11,6 +11,12 @@
 
 A comprehensive AI-driven stock analysis framework built on LangGraph, featuring 10 specialized agents for technical analysis, fundamental analysis, sentiment analysis, bull/bear debate, risk management, and more.
 
+## 🎨 截图预览
+
+![3D智能体可视化](screenshots/3D可视化.gif)
+
+![可视化分析](screenshots/可视化分析.gif)
+
 [快速开始](#快速开始) · [功能特性](#功能特性) · [架构设计](#架构设计) · [多LLM支持](#多llm支持) · [API文档](#api文档)
 
 </div>
