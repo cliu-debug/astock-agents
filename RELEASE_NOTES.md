@@ -17,12 +17,6 @@
 - **MCP协议支持**: 6个标准化金融工具接口
 - **Vue3可视化**: 3D智能体场景/K线图/工作流图
 
-## 截图预览
-
-![主页](screenshots/homepage.png)
-![分析界面](screenshots/analysis.png)
-![K线图](screenshots/kline.png)
-
 ## 快速开始
 
 ```bash
